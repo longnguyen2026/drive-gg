@@ -4,7 +4,7 @@
 # Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 3.1 ngày 09.11.2026
+# Version : 3.2 ngày 09.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -31,7 +31,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 3.1"
+echo "          GOOGLE DRIVE INTEGRATOR 3.2"
 echo "          Linux Mint / Kubuntu / Ubuntu KDE"
 echo "          Author: Long Nguyen"
 echo "====================================================="
@@ -174,7 +174,7 @@ elif [[ "$IS_KDE" == true ]]; then
         success "Cài đặt hoàn tất."
     fi
 
-    # Cấu hình systemd user service tự động mount
+    # Cấu hình systemd user service tự động mount với cơ chế dọn dẹp mountpoint
     SERVICE_DIR="$HOME/.config/systemd/user"
     SERVICE_FILE="$SERVICE_DIR/rclone-gdrive.service"
     mkdir -p "$SERVICE_DIR"
@@ -186,16 +186,17 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=notify
+Type=simple
+ExecStartPre=/bin/sh -c 'mkdir -p %h/GoogleDrive && fusermount -uz %h/GoogleDrive 2>/dev/null || true'
 ExecStart=/usr/bin/rclone mount drive: %h/GoogleDrive \\
   --vfs-cache-mode full \\
   --vfs-cache-max-age 24h \\
   --vfs-read-chunk-size 32M \\
   --buffer-size 32M \\
   --dir-cache-time 72h
-ExecStop=/bin/fusermount -u %h/GoogleDrive
+ExecStop=/bin/fusermount -uz %h/GoogleDrive
 Restart=on-failure
-RestartSec=10
+RestartSec=5
 
 [Install]
 WantedBy=default.target
@@ -239,18 +240,26 @@ elif [[ "$IS_KDE" == true ]]; then
 
     # Kiểm tra remote 'drive' trong rclone
     if ! rclone listremotes 2>/dev/null | grep -q "^drive:"; then
-        warn "Chưa phát hiện remote 'drive'. Tiến hành hướng dẫn đăng nhập rclone..."
+        log "Chưa có cấu hình Google Drive. Đang tự động kết nối tài khoản..."
         echo
-        echo ">> Đang mở cấu hình rclone kết nối Google Drive..."
-        rclone config
+        echo -e "${YELLOW}>> Trình duyệt sẽ tự động mở lên trong giây lát.${NC}"
+        echo -e "${YELLOW}>> Vui lòng đăng nhập Gmail và chọn 'Allow' (Cho phép) để cấp quyền.${NC}"
+        echo
+
+        # Tự động cấu hình rclone với tham số scope=drive (Full access), không cần tương tác terminal
+        rclone config create drive drive scope drive
     fi
 
+    # Kiểm tra lại sau khi người dùng xác thực xong trên web
     if rclone listremotes 2>/dev/null | grep -q "^drive:"; then
-        log "Kích hoạt dịch vụ mount tự động cùng hệ thống..."
+        log "Đã xác thực thành công remote 'drive'!"
+        log "Khởi chạy và bật tự động mount service..."
+        fusermount -uz "$TARGET_DIR" 2>/dev/null || true
         systemctl --user enable --now rclone-gdrive.service 2>/dev/null || true
+        sleep 2
         success "Google Drive đã được gắn tại: $TARGET_DIR"
     else
-        warn "Người dùng chưa tạo remote tên 'drive'. Service chưa được kích hoạt."
+        warn "Chưa hoàn tất xác thực tài khoản Google. Hãy chạy lại script sau."
     fi
 
     # Tự động ghim thư mục vào Places của Dolphin nếu chưa có
@@ -281,12 +290,11 @@ EOF
 HƯỚNG DẪN SỬ DỤNG GOOGLE DRIVE - KUBUNTU / KDE
 =====================================================
 
-1. Thư mục gắn tại máy : $TARGET_DIR
-2. Trạng thái kết nối   : ĐÃ KẾT NỐI VÀ CHẠY TỰ ĐỘNG
+1. Thư mục mount tại máy: $TARGET_DIR
+2. Trạng thái kết nối   : HOÀN TẤT VÀ TỰ ĐỘNG KHỞI CHẠY CÙNG HỆ THỐNG
 3. Sử dụng:
    - Mở Dolphin: Thư mục "Google Drive" đã có sẵn ở cột Places bên trái.
-   - Toàn bộ ứng dụng (Văn phòng, Đồ họa, Trình duyệt) có thể đọc/ghi trực tiếp
-     vào $TARGET_DIR như một ổ cứng nội bộ.
+   - Toàn bộ ứng dụng có thể đọc/ghi trực tiếp vào $TARGET_DIR.
 
 =====================================================
 
@@ -311,6 +319,6 @@ echo "Phương thức  : $INSTALL_MODE"
 echo "Thời gian    : ${ELAPSED} giây"
 
 echo
-success "Hoàn tất cài đặt Google Drive Integrator 3.1."
+success "Hoàn tất cài đặt Google Drive Integrator 3.2."
 
 exit 0
