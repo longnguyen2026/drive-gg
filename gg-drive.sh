@@ -4,7 +4,7 @@
 # Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 2.5 ngày 09.11.2026
+# Version : 2.6 ngày 09.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -31,7 +31,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 2.5"
+echo "          GOOGLE DRIVE INTEGRATOR 2.6"
 echo "          Linux Mint / Kubuntu / Ubuntu KDE"
 echo "          Author: Long Nguyen"
 echo "====================================================="
@@ -150,12 +150,18 @@ elif [[ "$IS_KDE" == true ]]; then
 
     log "Phương thức: Google Drive qua KDE KIO & KAccounts."
 
+    # Chọn gói signon-ui cụ thể (tránh virtual package)
+    SIGNON_UI_PKG="signon-ui-qt"
+    if ! apt-cache show signon-ui-qt >/dev/null 2>&1; then
+        SIGNON_UI_PKG="signon-ui-x11"
+    fi
+
     PACKAGES=(
         kio-gdrive
         kaccounts-providers
         kaccounts-integration
         signon-plugin-oauth2
-        signon-ui
+        "$SIGNON_UI_PKG"
     )
 
 fi
@@ -344,6 +350,6 @@ echo "Phương thức  : $INSTALL_MODE"
 echo "Thời gian    : ${ELAPSED} giây"
 
 echo
-success "Hoàn tất cài đặt Google Drive Integrator 2.5."
+success "Hoàn tất cài đặt Google Drive Integrator 2.6."
 
 exit 0
