@@ -3,8 +3,8 @@
 # Google Drive Clean & Reset Tool
 # Linux Mint / Kubuntu / Ubuntu KDE
 # Author  : Long Nguyen
-# Script  : uninstall-google-drive.sh
-# Version : 1.0 ngày 09.11.2026
+# Script  : remove-drive.sh
+# Version : 1.1 ngày 09.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -30,7 +30,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "       GOOGLE DRIVE CLEAN & RESET UTILITY"
+echo "       GOOGLE DRIVE CLEAN & RESET UTILITY 1.1"
 echo "       Dọn sạch kết nối Rclone & KDE KIO GDrive"
 echo "       Author: Long Nguyen"
 echo "====================================================="
@@ -52,7 +52,8 @@ systemctl --user disable rclone-gdrive.service 2>/dev/null || true
 SERVICE_FILE="$HOME/.config/systemd/user/rclone-gdrive.service"
 if [[ -f "$SERVICE_FILE" ]]; then
     rm -f "$SERVICE_FILE"
-    systemctl --user daemon-reload
+    systemctl --user daemon-reload || true
+    systemctl --user reset-failed || true
     success "Đã xóa file service rclone-gdrive.service."
 fi
 
@@ -62,9 +63,13 @@ fi
 
 log "Ngắt kết nối điểm mount và dừng tiến trình chạy ngầm..."
 
+# Dừng toàn bộ tiến trình rclone và kio
+killall -9 rclone 2>/dev/null || true
+killall -9 kio_gdrive 2>/dev/null || true
+
+# Ép unmount đa tầng tránh kẹt device busy
 fusermount -uz "$HOME/GoogleDrive" 2>/dev/null || true
-killall rclone 2>/dev/null || true
-killall kio_gdrive 2>/dev/null || true
+umount -l "$HOME/GoogleDrive" 2>/dev/null || true
 
 success "Đã giải phóng điểm mount ~/GoogleDrive."
 
@@ -78,8 +83,8 @@ if command -v rclone >/dev/null 2>&1; then
     rclone config delete drive 2>/dev/null || true
 fi
 
-rm -rf "$HOME/.config/rclone"
-rm -rf "$HOME/.cache/rclone"
+rm -rf "$HOME/.config/rclone" 2>/dev/null || true
+rm -rf "$HOME/.cache/rclone" 2>/dev/null || true
 
 success "Đã dọn dẹp thư mục cấu hình và cache Rclone."
 
@@ -89,8 +94,8 @@ success "Đã dọn dẹp thư mục cấu hình và cache Rclone."
 
 log "Dọn dẹp cấu hình KAccounts và cache KIO..."
 
-rm -f "$HOME/.local/share/accounts/providers/kde/google.provider"
-rm -rf "$HOME/.local/share/accounts"
+rm -f "$HOME/.local/share/accounts/providers/kde/google.provider" 2>/dev/null || true
+rm -rf "$HOME/.local/share/accounts" 2>/dev/null || true
 
 kbuildsycoca6 >/dev/null 2>&1 || kbuildsycoca5 >/dev/null 2>&1 || true
 
@@ -102,11 +107,18 @@ success "Đã làm mới lại cơ sở dữ liệu KIO."
 
 log "Dọn dẹp thư mục ~/GoogleDrive và bookmark Places..."
 
-rm -rf "$HOME/GoogleDrive"
+# Đảm bảo unmount hoàn tất trước khi xóa thư mục
+sleep 1
+if mountpoint -q "$HOME/GoogleDrive" 2>/dev/null; then
+    fusermount -uz "$HOME/GoogleDrive" 2>/dev/null || true
+fi
+rm -rf "$HOME/GoogleDrive" 2>/dev/null || true
 
 USER_PLACES="$HOME/.local/share/user-places.xbel"
 if [[ -f "$USER_PLACES" ]]; then
-    sed -i '/<bookmark href="file:\/\/.*GoogleDrive">/,/<\/bookmark>/d' "$USER_PLACES"
+    sed -i '/<bookmark href="file:\/\/.*GoogleDrive">/,/<\/bookmark>/d' "$USER_PLACES" 2>/dev/null || true
+    # Dọn thêm bookmark giao thức kio cũ nếu còn
+    sed -i '/<bookmark href="gdrive:\/">/,/<\/bookmark>/d' "$USER_PLACES" 2>/dev/null || true
     success "Đã gỡ bookmark Google Drive khỏi danh sách Places của Dolphin."
 fi
 
@@ -120,7 +132,7 @@ echo "       DỌN DẸP TOÀN BỘ KẾT NỐI HOÀN TẤT!"
 echo "====================================================="
 echo -e "${NC}"
 
-echo "Tất cả mount, service, token cũ và bookmark đã được đưa về trạng thái trắng."
-echo "Hệ thống sẵn sàng để test lại script cài đặt mới."
+echo "Tất cả mount, service, token cũ và bookmark đã được đưa về trạng thái sạch."
+echo "Hệ thống sẵn sàng để chạy lại script cài đặt mới."
 
 exit 0
