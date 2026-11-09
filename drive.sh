@@ -4,7 +4,7 @@
 # Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 3.5 ngày 09.11.2026
+# Version : 3.6 ngày 09.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -31,7 +31,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 3.5"
+echo "          GOOGLE DRIVE INTEGRATOR 3.6"
 echo "          Linux Mint / Kubuntu / Ubuntu KDE"
 echo "          Author: Long Nguyen"
 echo "====================================================="
@@ -248,13 +248,20 @@ elif [[ "$IS_KDE" == true ]]; then
         echo -e "${YELLOW}=====================================================${NC}"
         echo -e "${YELLOW}       ĐANG KẾT NỐI TÀI KHOẢN GOOGLE DRIVE           ${NC}"
         echo -e "${YELLOW}=====================================================${NC}"
-        echo "Script đang tự động nạp cấu hình (n -> drive -> drive -> 1 -> y -> n -> y -> q)."
-        echo -e "${GREEN}>> TRÌNH DUYỆT SẼ TỰ ĐỘNG BẬT LÊN ĐỂ ĐĂNG NHẬP GMAIL.${NC}"
-        echo -e "${GREEN}>> ANH CHỈ CẦN BẤM 'CHO PHÉP' (ALLOW) TRÊN WEB LÀ XONG!${NC}"
-        echo "-----------------------------------------------------"
+        log "Trình duyệt web sẽ tự động mở lên trong giây lát..."
+        log "Vui lòng đăng nhập Gmail và bấm 'Cho phép' (Allow) để cấp quyền."
+        echo
 
-        # Tự động nạp sẵn chuỗi tương tác vào rclone config
-        printf "n\ndrive\ndrive\n\n\n1\n\nn\ny\nn\ny\nq\n" | rclone config
+        # Mở trình duyệt web lấy token OAuth trực tiếp, không qua menu TUI
+        RAW_OUTPUT=$(rclone authorize "drive" 2>&1)
+        AUTH_TOKEN=$(echo "$RAW_OUTPUT" | grep -o '{"access_token":.*}' || true)
+
+        if [[ -n "$AUTH_TOKEN" ]]; then
+            rclone config create drive drive scope drive token "$AUTH_TOKEN" >/dev/null 2>&1
+            success "Đã xác thực và lưu token Google Drive thành công!"
+        else
+            die "Không nhận được mã xác thực từ trình duyệt. Vui lòng thử lại."
+        fi
     fi
 
     # Giải phóng thư mục nếu còn kẹt mount cũ
@@ -335,6 +342,6 @@ echo "Phương thức  : $INSTALL_MODE"
 echo "Thời gian    : ${ELAPSED} giây"
 
 echo
-success "Hoàn tất cài đặt Google Drive Integrator 3.5."
+success "Hoàn tất cài đặt Google Drive Integrator 3.6."
 
 exit 0
