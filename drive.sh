@@ -4,7 +4,7 @@
 # Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 3.6 ngày 09.11.2026
+# Version : 3.7 ngày 09.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -31,7 +31,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 3.6"
+echo "          GOOGLE DRIVE INTEGRATOR 3.7"
 echo "          Linux Mint / Kubuntu / Ubuntu KDE"
 echo "          Author: Long Nguyen"
 echo "====================================================="
@@ -246,21 +246,22 @@ elif [[ "$IS_KDE" == true ]]; then
     if [[ "$TOKEN_VALID" == false ]]; then
         echo
         echo -e "${YELLOW}=====================================================${NC}"
-        echo -e "${YELLOW}       ĐANG KẾT NỐI TÀI KHOẢN GOOGLE DRIVE           ${NC}"
+        echo -e "${YELLOW}       KẾT NỐI TÀI KHOẢN GOOGLE DRIVE                ${NC}"
         echo -e "${YELLOW}=====================================================${NC}"
         log "Trình duyệt web sẽ tự động mở lên trong giây lát..."
         log "Vui lòng đăng nhập Gmail và bấm 'Cho phép' (Allow) để cấp quyền."
         echo
 
-        # Mở trình duyệt web lấy token OAuth trực tiếp, không qua menu TUI
-        RAW_OUTPUT=$(rclone authorize "drive" 2>&1)
-        AUTH_TOKEN=$(echo "$RAW_OUTPUT" | grep -o '{"access_token":.*}' || true)
+        # Mở xác thực OAuth trực tiếp, đọc từ /dev/tty để tránh lỗi EOF pipe
+        RAW_TOKEN=$(rclone authorize "drive" < /dev/tty 2>&1)
+        AUTH_TOKEN=$(echo "$RAW_TOKEN" | grep -o '{"access_token":.*}' || true)
 
         if [[ -n "$AUTH_TOKEN" ]]; then
             rclone config create drive drive scope drive token "$AUTH_TOKEN" >/dev/null 2>&1
-            success "Đã xác thực và lưu token Google Drive thành công!"
+            success "Đã lưu cấu hình Google Drive thành công!"
         else
-            die "Không nhận được mã xác thực từ trình duyệt. Vui lòng thử lại."
+            warn "Không bắt được token tự động, chuyển sang cấu hình tương tác:"
+            rclone config < /dev/tty
         fi
     fi
 
@@ -268,6 +269,7 @@ elif [[ "$IS_KDE" == true ]]; then
     fusermount -uz "$TARGET_DIR" 2>/dev/null || true
 
     log "Kích hoạt và nạp chạy Systemd Mount Service..."
+    systemctl --user daemon-reload
     systemctl --user enable --now rclone-gdrive.service 2>/dev/null || true
     sleep 3
 
@@ -342,6 +344,6 @@ echo "Phương thức  : $INSTALL_MODE"
 echo "Thời gian    : ${ELAPSED} giây"
 
 echo
-success "Hoàn tất cài đặt Google Drive Integrator 3.6."
+success "Hoàn tất cài đặt Google Drive Integrator 3.7."
 
 exit 0
