@@ -4,7 +4,7 @@
 # Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 3.8 ngày 09.11.2026
+# Version : 3.8 ngày 09.11.2026 xác thực 2 lần (dự phòng)
 #=========================================================
 
 set -Eeuo pipefail
