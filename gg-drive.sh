@@ -4,7 +4,7 @@
 # Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 2.2 ngày 09.11.2026
+# Version : 2.3 ngày 09.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -31,7 +31,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 2.2"
+echo "          GOOGLE DRIVE INTEGRATOR 2.3"
 echo "          Linux Mint / Kubuntu / Ubuntu KDE"
 echo "          Author: Long Nguyen"
 echo "====================================================="
@@ -150,12 +150,13 @@ elif [[ "$IS_KDE" == true ]]; then
 
     log "Phương thức: Google Drive qua KDE KIO & KAccounts."
 
-    # Bổ sung đầy đủ backend xác thực OAuth2 & KAccounts KCM cho KDE
+    # Bổ sung đầy đủ backend, SSO webview và authentication provider
     PACKAGES=(
         kio-gdrive
         kaccounts-providers
         kaccounts-integration
         signon-plugin-oauth2
+        signon-ui
     )
 
 fi
@@ -171,8 +172,8 @@ MISSING_PACKAGES=()
 for pkg in "${PACKAGES[@]}"; do
 
     if ! apt-cache show "$pkg" >/dev/null 2>&1; then
-        die "Không tìm thấy gói $pkg trong kho APT.
-Hãy kiểm tra nguồn phần mềm của hệ thống."
+        warn "Gói $pkg không có sẵn trong kho APT, bỏ qua kiểm tra bắt buộc."
+        continue
     fi
 
     if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null |
@@ -204,89 +205,26 @@ if (( ${#MISSING_PACKAGES[@]} > 0 )); then
 else
 
     success "Tất cả gói cần thiết đã có."
-#!/usr/bin/env bash
-#=========================================================
-# Universal Google Drive Integrator
-# Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
-# Author  : Long Nguyen
-# Script  : install-google-drive.sh
-# Version : 2.1 ngày 09.11.2026
-#=========================================================
-
-set -Eeuo pipefail
-
-SCRIPT_NAME="$(basename "$0")"
-START_TIME=$(date +%s)
-
-RED='\033[1;31m'
-GREEN='\033[1;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;34m'
-CYAN='\033[1;36m'
-NC='\033[0m'
-
-log()     { printf "${GREEN}[INFO]${NC} %s\n" "$1"; }
-warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
-error()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; }
-success() { printf "${CYAN}[ OK ]${NC} %s\n" "$1"; }
-die()     { error "$1"; exit 1; }
-
-trap 'error "Lỗi tại dòng $LINENO"; exit 1' ERR
-
-clear 2>/dev/null || true
-
-echo -e "${BLUE}"
-echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 2.1"
-echo "          Linux Mint / Kubuntu / Ubuntu KDE"
-echo "          Author: Long Nguyen"
-echo "====================================================="
-echo -e "${NC}"
-
-#=========================================================
-# 1. SYSTEM CHECK
-#=========================================================
-
-[[ $EUID -ne 0 ]] || die \
-"Không chạy script bằng root trực tiếp.
-Hãy chạy: bash $SCRIPT_NAME"
-
-[[ -f /etc/os-release ]] || die "Không nhận diện được hệ điều hành."
-
-source /etc/os-release
-
-OS_ID="${ID:-unknown}"
-OS_NAME="${NAME:-Unknown}"
-OS_VERSION="${VERSION_ID:-Unknown}"
-
-DESKTOP_INFO="${XDG_CURRENT_DESKTOP:-} ${XDG_SESSION_DESKTOP:-} ${DESKTOP_SESSION:-}"
-DESKTOP_INFO="${DESKTOP_INFO,,}"
-
-IS_MINT=false
-IS_KDE=false
-
 
 fi
 
 #=========================================================
-# 9. VERIFY INSTALLATION
+# 9. REBUILD SYSTEM CACHE & VERIFY
 #=========================================================
+
+log "Tái tạo cache KIO / Desktop MIME..."
+
+# Làm mới database dịch vụ KIO để nhận kio-gdrive ngay trong phiên làm việc
+if [[ "$IS_KDE" == true ]]; then
+    kbuildsycoca6 >/dev/null 2>&1 || kbuildsycoca5 >/dev/null 2>&1 || true
+fi
 
 log "Kiểm tra sau cài đặt..."
 
 for pkg in "${PACKAGES[@]}"; do
-
-    if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null |
-       grep -q "install ok installed"; then
-
+    if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
         success "$pkg: OK"
-
-    else
-
-        die "Kiểm tra thất bại: $pkg"
-
     fi
-
 done
 
 kill "$SUDO_PID" 2>/dev/null || true
@@ -303,15 +241,10 @@ if [[ "$HAS_GUI" == true ]]; then
     if [[ "$IS_MINT" == true ]]; then
 
         if command -v gnome-online-accounts-gtk >/dev/null 2>&1; then
-
             log "Mở Google Online Accounts..."
-
             gnome-online-accounts-gtk >/dev/null 2>&1 &
-
         else
-
             warn "Không tìm thấy giao diện Online Accounts GTK."
-
         fi
 
         cat <<'EOF'
@@ -337,14 +270,28 @@ EOF
 
     elif [[ "$IS_KDE" == true ]]; then
 
-        log "Khởi chạy cấu hình tài khoản KDE..."
-#!/usr/bin/env bash
+        log "Khởi chạy cửa sổ thêm tài khoản Google Online Accounts..."
+
+        # Mở trực tiếp module cấu hình Online Accounts để đăng nhập
+        if command -v kcmshell6 >/dev/null 2>&1; then
+            kcmshell6 kcm_kaccounts >/dev/null 2>&1 &
+        elif command -v kcmshell5 >/dev/null 2>&1; then
+            kcmshell5 kcm_kaccounts >/dev/null 2>&1 &
+        elif command -v systemsettings >/dev/null 2>&1; then
+            systemsettings kcm_kaccounts >/dev/null 2>&1 &
+        fi
+
+        cat <<'EOF'
+
+=====================================================
+HƯỚNG DẪN SỬ DỤNG GOOGLE DRIVE - KUBUNTU / KDE
+====================================================#!/usr/bin/env bash
 #=========================================================
 # Universal Google Drive Integrator
 # Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 2.1 ngày 09.11.2026
+# Version : 2.2 ngày 09.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -371,7 +318,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 2.1"
+echo "          GOOGLE DRIVE INTEGRATOR 2.2"
 echo "          Linux Mint / Kubuntu / Ubuntu KDE"
 echo "          Author: Long Nguyen"
 echo "====================================================="
@@ -399,35 +346,78 @@ DESKTOP_INFO="${DESKTOP_INFO,,}"
 IS_MINT=false
 IS_KDE=false
 
+#!/usr/bin/env bash
+#=========================================================
+# Universal Google Drive Integrator
+# Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
+# Author  : Long Nguyen
+# Script  : install-google-drive.sh
+# Version : 2.2 ngày 09.11.2026
+#=========================================================
 
-        # Mở trực tiếp module cấu hình Online Accounts trên Plasma 5 & Plasma 6
-        if command -v kcmshell6 >/dev/null 2>&1; then
-            kcmshell6 kcm_kaccounts >/dev/null 2>&1 &
-        elif command -v kcmshell5 >/dev/null 2>&1; then
-            kcmshell5 kcm_kaccounts >/dev/null 2>&1 &
-        elif command -v systemsettings >/dev/null 2>&1; then
-            systemsettings kcm_kaccounts >/dev/null 2>&1 &
-        else
-            warn "Không tìm thấy trình quản lý cấu hình KDE."
-        fi
+set -Eeuo pipefail
 
-        cat <<'EOF'
+SCRIPT_NAME="$(basename "$0")"
+START_TIME=$(date +%s)
 
-=====================================================
-HƯỚNG DẪN SỬ DỤNG GOOGLE DRIVE - KUBUNTU / KDE
-=====================================================
+RED='\033[1;31m'
+GREEN='\033[1;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[1;34m'
+CYAN='\033[1;36m'
+NC='\033[0m'
 
-1. Cửa sổ Online Accounts sẽ tự động hiển thị (hoặc vào
-   System Settings -> Personal Information / Online Accounts).
-2. Chọn Add New Account -> Google.
-3. Đăng nhập và xác thực tài khoản Google.
-4. Mở Dolphin:
-   - Cách 1: Chọn Network -> Google Drive.
-   - Cách 2: Bấm Ctrl + L và nhập: gdrive:/ rồi Enter.
+log()     { printf "${GREEN}[INFO]${NC} %s\n" "$1"; }
+warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
+error()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; }
+success() { printf "${CYAN}[ OK ]${NC} %s\n" "$1"; }
+die()     { error "$1"; exit 1; }
 
-Lưu ý:
-KIO GDrive là trình truy cập dữ liệu trực tuyến
-qua KDE KIO, không phải công cụ đồng bộ offline.
+trap 'error "Lỗi tại dòng $LINENO"; exit 1' ERR
+
+clear 2>/dev/null || true
+
+echo -e "${BLUE}"
+echo "====================================================="
+echo "          GOOGLE DRIVE INTEGRATOR 2.2"
+echo "          Linux Mint / Kubuntu / Ubuntu KDE"
+echo "          Author: Long Nguyen"
+echo "====================================================="
+echo -e "${NC}"
+
+#=========================================================
+# 1. SYSTEM CHECK
+#=========================================================
+
+[[ $EUID -ne 0 ]] || die \
+"Không chạy script bằng root trực tiếp.
+Hãy chạy: bash $SCRIPT_NAME"
+
+[[ -f /etc/os-release ]] || die "Không nhận diện được hệ điều hành."
+
+source /etc/os-release
+
+OS_ID="${ID:-unknown}"
+OS_NAME="${NAME:-Unknown}"
+OS_VERSION="${VERSION_ID:-Unknown}"
+
+DESKTOP_INFO="${XDG_CURRENT_DESKTOP:-} ${XDG_SESSION_DESKTOP:-} ${DESKTOP_SESSION:-}"
+DESKTOP_INFO="${DESKTOP_INFO,,}"
+
+IS_MINT=false
+IS_KDE=false
+
+=
+
+1. Cửa sổ "Online Accounts" vừa được tự động bật lên.
+2. Chọn "Add New Account" (hoặc dấu +) -> Chọn "Google".
+3. Đăng nhập tài khoản Google và cấp quyền truy cập.
+4. Sau khi đăng nhập thành công:
+   - Mở Dolphin -> Bấm vào mục "Network" bên trái -> Chọn "Google Drive".
+   - Hoặc gõ "gdrive:/" trên thanh địa chỉ của Dolphin rồi Enter.
+
+* Lưu ý: Không chạy lệnh trực tiếp bằng kioclient khi chưa thêm tài khoản
+  vì sẽ gặp lỗi "The file or folder / does not exist".
 
 =====================================================
 
@@ -461,10 +451,6 @@ echo "Phương thức  : $INSTALL_MODE"
 echo "Thời gian    : ${ELAPSED} giây"
 
 echo
-success "Hoàn tất cài đặt Google Drive Integrator 2.2."
-
-echo
-echo "Lưu ý: Người dùng cần đăng nhập Google và cấp quyền."
-echo "Script không xóa tài khoản hoặc dữ liệu hiện có."
+success "Hoàn tất cài đặt Google Drive Integrator 2.3."
 
 exit 0
