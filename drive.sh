@@ -4,7 +4,7 @@
 # Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 2.6 ngày 09.11.2026
+# Version : 3.1 ngày 09.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -31,7 +31,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 2.6"
+echo "          GOOGLE DRIVE INTEGRATOR 3.1"
 echo "          Linux Mint / Kubuntu / Ubuntu KDE"
 echo "          Author: Long Nguyen"
 echo "====================================================="
@@ -61,7 +61,6 @@ IS_KDE=false
 
 [[ "$OS_ID" == "linuxmint" ]] && IS_MINT=true
 
-# Nhận diện KDE Plasma qua biến môi trường hoặc fallback qua package hệ thống
 if [[ "$DESKTOP_INFO" == *"kde"* ]] || [[ "$DESKTOP_INFO" == *"plasma"* ]]; then
     IS_KDE=true
 elif dpkg -l kubuntu-desktop >/dev/null 2>&1 || dpkg -l plasma-desktop >/dev/null 2>&1; then
@@ -76,20 +75,14 @@ log "Desktop: ${DESKTOP_INFO:-Detected via installed packages}"
 #=========================================================
 
 if [[ "$IS_MINT" == true ]]; then
-
     log "Đã nhận diện Linux Mint."
-
 elif [[ "$OS_ID" == "ubuntu" && "$IS_KDE" == true ]]; then
-
     log "Đã nhận diện Ubuntu/Kubuntu KDE Plasma."
-
 else
-
     die "Hệ điều hành hoặc Desktop chưa được hỗ trợ.
 Hỗ trợ:
 - Linux Mint
 - Kubuntu / Ubuntu KDE Plasma"
-
 fi
 
 #=========================================================
@@ -97,7 +90,6 @@ fi
 #=========================================================
 
 HAS_GUI=false
-
 if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
     HAS_GUI=true
 fi
@@ -107,7 +99,6 @@ fi
 #=========================================================
 
 log "Xác thực quyền quản trị..."
-
 sudo -v || die "Không xác thực được sudo."
 
 while true; do sudo -n true; sleep 60; kill -0 "$$" || exit; done 2>/dev/null &
@@ -119,22 +110,19 @@ trap 'kill "$SUDO_PID" 2>/dev/null || true; error "Lỗi tại dòng $LINENO"; e
 #=========================================================
 
 log "Cập nhật danh sách gói..."
-
 sudo apt-get update
-
 success "Cập nhật Package Index thành công."
 
 #=========================================================
-# 6. SELECT INSTALLATION METHOD
+# 6. SELECT INSTALLATION METHOD & INSTALL
 #=========================================================
 
-PACKAGES=()
-INSTALL_MODE=""
+TARGET_DIR="$HOME/GoogleDrive"
+mkdir -p "$TARGET_DIR"
 
 if [[ "$IS_MINT" == true ]]; then
 
     INSTALL_MODE="GVFS + GNOME Online Accounts GTK"
-
     log "Phương thức: Google Drive qua GVFS."
 
     PACKAGES=(
@@ -144,202 +132,175 @@ if [[ "$IS_MINT" == true ]]; then
         gvfs-fuse
     )
 
+    MISSING_PACKAGES=()
+    for pkg in "${PACKAGES[@]}"; do
+        if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+            success "$pkg: Đã cài đặt."
+        else
+            warn "$pkg: Chưa cài đặt."
+            MISSING_PACKAGES+=("$pkg")
+        fi
+    done
+
+    if (( ${#MISSING_PACKAGES[@]} > 0 )); then
+        log "Đang cài đặt các gói còn thiếu..."
+        sudo apt-get install -y "${MISSING_PACKAGES[@]}"
+        success "Cài đặt hoàn tất."
+    fi
+
 elif [[ "$IS_KDE" == true ]]; then
 
-    INSTALL_MODE="KIO GDrive + KAccounts Framework (OAuth Fixed)"
-
-    log "Phương thức: Google Drive qua KDE KIO & KAccounts."
-
-    # Chọn gói signon-ui cụ thể (tránh virtual package)
-    SIGNON_UI_PKG="signon-ui-qt"
-    if ! apt-cache show signon-ui-qt >/dev/null 2>&1; then
-        SIGNON_UI_PKG="signon-ui-x11"
-    fi
+    INSTALL_MODE="Rclone Native FUSE Mount"
+    log "Phương thức: Google Drive qua Rclone FUSE (Dolphin Places)."
 
     PACKAGES=(
-        kio-gdrive
-        kaccounts-providers
-        kaccounts-integration
-        signon-plugin-oauth2
-        "$SIGNON_UI_PKG"
+        rclone
+        fuse3
     )
 
-fi
+    MISSING_PACKAGES=()
+    for pkg in "${PACKAGES[@]}"; do
+        if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+            success "$pkg: Đã cài đặt."
+        else
+            warn "$pkg: Chưa cài đặt."
+            MISSING_PACKAGES+=("$pkg")
+        fi
+    done
 
-#=========================================================
-# 7. CHECK PACKAGE AVAILABILITY
-#=========================================================
-
-log "Kiểm tra các gói cần thiết..."
-
-MISSING_PACKAGES=()
-
-for pkg in "${PACKAGES[@]}"; do
-
-    if ! apt-cache show "$pkg" >/dev/null 2>&1; then
-        warn "Gói $pkg không có sẵn trong kho APT, bỏ qua kiểm tra bắt buộc."
-        continue
+    if (( ${#MISSING_PACKAGES[@]} > 0 )); then
+        log "Đang cài đặt các gói còn thiếu..."
+        sudo apt-get install -y "${MISSING_PACKAGES[@]}"
+        success "Cài đặt hoàn tất."
     fi
 
-    if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null |
-       grep -q "install ok installed"; then
+    # Cấu hình systemd user service tự động mount
+    SERVICE_DIR="$HOME/.config/systemd/user"
+    SERVICE_FILE="$SERVICE_DIR/rclone-gdrive.service"
+    mkdir -p "$SERVICE_DIR"
 
-        success "$pkg: Đã cài đặt."
+    cat <<EOF > "$SERVICE_FILE"
+[Unit]
+Description=Mount Google Drive via Rclone
+After=network-online.target
+Wants=network-online.target
 
-    else
+[Service]
+Type=notify
+ExecStart=/usr/bin/rclone mount drive: %h/GoogleDrive \\
+  --vfs-cache-mode full \\
+  --vfs-cache-max-age 24h \\
+  --vfs-read-chunk-size 32M \\
+  --buffer-size 32M \\
+  --dir-cache-time 72h
+ExecStop=/bin/fusermount -u %h/GoogleDrive
+Restart=on-failure
+RestartSec=10
 
-        warn "$pkg: Chưa cài đặt."
-        MISSING_PACKAGES+=("$pkg")
+[Install]
+WantedBy=default.target
+EOF
 
-    fi
-
-done
-
-#=========================================================
-# 8. INSTALL PACKAGES
-#=========================================================
-
-if (( ${#MISSING_PACKAGES[@]} > 0 )); then
-
-    log "Đang cài đặt các gói còn thiếu..."
-
-    sudo apt-get install -y "${MISSING_PACKAGES[@]}"
-
-    success "Cài đặt hoàn tất."
-
-else
-
-    success "Tất cả gói cần thiết đã có."
-
-fi
-
-#=========================================================
-# 9. PATCH GOOGLE OAUTH CLIENT ID (FIX KDE ACCESS DENIED)
-#=========================================================
-
-if [[ "$IS_KDE" == true ]]; then
-
-    log "Áp dụng bản vá Google OAuth2 Client ID cho KDE KAccounts..."
-
-    USER_PROVIDER_DIR="$HOME/.local/share/accounts/providers/kde"
-    mkdir -p "$USER_PROVIDER_DIR"
-
-    SYS_PROVIDER="/usr/share/accounts/providers/kde/google.provider"
-
-    if [[ -f "$SYS_PROVIDER" ]]; then
-        cp -f "$SYS_PROVIDER" "$USER_PROVIDER_DIR/google.provider"
-
-        # Giải mã base64 lúc runtime để không bị cơ chế quét secret của GitHub chặn
-        OAUTH_CID=$(echo "OTM2NDc1MjcyNDI3LmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t" | base64 -d)
-        OAUTH_SEC=$(echo "R0NDU1BYLWd3bm05RC15WEdnTWt5ay1uMk4zNC1XOXl2Mmw=" | base64 -d)
-
-        sed -i "s|<client-id>.*</client-id>|<client-id>${OAUTH_CID}</client-id>|" "$USER_PROVIDER_DIR/google.provider"
-        sed -i "s|<client-secret>.*</client-secret>|<client-secret>${OAUTH_SEC}</client-secret>|" "$USER_PROVIDER_DIR/google.provider"
-
-        success "Đã cập nhật Google OAuth2 Provider thành công."
-    else
-        warn "Không tìm thấy file hệ thống google.provider, bỏ qua bước patch."
-    fi
-
-    # Làm mới database KIO và ngắt các worker cũ đang bị treo token rỗng
-    killall kio_gdrive 2>/dev/null || true
-    kbuildsycoca6 >/dev/null 2>&1 || kbuildsycoca5 >/dev/null 2>&1 || true
+    systemctl --user daemon-reload
 
 fi
 
-# Tắt tiến trình sudo keepalive
 kill "$SUDO_PID" 2>/dev/null || true
 
 #=========================================================
-# 10. LAUNCH CONFIGURATION
+# 7. LAUNCH CONFIGURATION & FINISH
 #=========================================================
 
 echo
 log "Phương thức cài đặt: $INSTALL_MODE"
 
-if [[ "$HAS_GUI" == true ]]; then
+if [[ "$IS_MINT" == true ]]; then
 
-    if [[ "$IS_MINT" == true ]]; then
+    if [[ "$HAS_GUI" == true ]] && command -v gnome-online-accounts-gtk >/dev/null 2>&1; then
+        log "Mở Google Online Accounts..."
+        gnome-online-accounts-gtk >/dev/null 2>&1 &
+    fi
 
-        if command -v gnome-online-accounts-gtk >/dev/null 2>&1; then
-            log "Mở Google Online Accounts..."
-            gnome-online-accounts-gtk >/dev/null 2>&1 &
-        else
-            warn "Không tìm thấy giao diện Online Accounts GTK."
-        fi
-
-        cat <<'EOF'
+    cat <<'EOF'
 
 =====================================================
 HƯỚNG DẪN SỬ DỤNG GOOGLE DRIVE - LINUX MINT
 =====================================================
 
-1. Chọn Add Account -> Google.
-2. Đăng nhập tài khoản Google.
-3. Cấp quyền truy cập.
-4. Bật Files nếu tùy chọn này xuất hiện.
-5. Mở Nemo -> Network.
-6. Chọn Google Drive của tài khoản.
-
-Lưu ý:
-Tính năng này truy cập dữ liệu trực tuyến,
-không tự động đồng bộ toàn bộ dữ liệu về máy.
+1. Cửa sổ Online Accounts sẽ hiển thị -> Chọn Google.
+2. Đăng nhập và cho phép cấp quyền.
+3. Mở Nemo -> Chọn mục Network -> Chọn Google Drive.
 
 =====================================================
 
 EOF
 
-    elif [[ "$IS_KDE" == true ]]; then
+elif [[ "$IS_KDE" == true ]]; then
 
-        log "Khởi chạy cửa sổ Online Accounts..."
-
-        if command -v kcmshell6 >/dev/null 2>&1; then
-            kcmshell6 kcm_kaccounts >/dev/null 2>&1 &
-        elif command -v kcmshell5 >/dev/null 2>&1; then
-            kcmshell5 kcm_kaccounts >/dev/null 2>&1 &
-        elif command -v systemsettings >/dev/null 2>&1; then
-            systemsettings kcm_kaccounts >/dev/null 2>&1 &
-        fi
-
-        cat <<'EOF'
-
-=====================================================
-HƯỚNG DẪN QUAN TRỌNG ĐỂ XỬ LÝ LỖI "ACCESS DENIED"
-=====================================================
-
-Script đã tự động vá Client ID được Google xác thực vào hệ thống.
-Để áp dụng cấu hình mới:
-
-1. Trong cửa sổ "Online Accounts" vừa hiện ra:
-   - Nếu đã có tài khoản cũ (như google1): Bấm vào và chọn "Remove This Account" (XÓA BỎ).
-2. Bấm "Add New Account" (hoặc dấu +) -> Chọn "Google".
-3. Đăng nhập tài khoản Google và cho phép cấp quyền truy cập.
-4. Mở Dolphin:
-   - Bấm vào Network bên cột trái -> Google Drive -> Nhấp vào tài khoản vừa thêm.
-   - Thư mục Google Drive sẽ tải danh sách file bình thường.
-
-=====================================================
-
-EOF
-
+    # Kiểm tra remote 'drive' trong rclone
+    if ! rclone listremotes 2>/dev/null | grep -q "^drive:"; then
+        warn "Chưa phát hiện remote 'drive'. Tiến hành hướng dẫn đăng nhập rclone..."
+        echo
+        echo ">> Đang mở cấu hình rclone kết nối Google Drive..."
+        rclone config
     fi
 
-else
+    if rclone listremotes 2>/dev/null | grep -q "^drive:"; then
+        log "Kích hoạt dịch vụ mount tự động cùng hệ thống..."
+        systemctl --user enable --now rclone-gdrive.service 2>/dev/null || true
+        success "Google Drive đã được gắn tại: $TARGET_DIR"
+    else
+        warn "Người dùng chưa tạo remote tên 'drive'. Service chưa được kích hoạt."
+    fi
 
-    warn "Không phát hiện phiên đồ họa."
-    warn "Các gói và bản vá OAuth đã được cài đặt."
-    warn "Hãy đăng nhập Desktop và mở Online Accounts để kết nối lại tài khoản."
+    # Tự động ghim thư mục vào Places của Dolphin nếu chưa có
+    USER_PLACES="$HOME/.local/share/user-places.xbel"
+    if [[ -f "$USER_PLACES" ]] && ! grep -q "GoogleDrive" "$USER_PLACES"; then
+        log "Ghim thư mục Google Drive vào thanh điều hướng Dolphin..."
+        sed -i 's|</xbel>||' "$USER_PLACES"
+        cat <<EOF >> "$USER_PLACES"
+ <bookmark href="file://$TARGET_DIR">
+  <title>Google Drive</title>
+  <info>
+   <metadata owner="http://freedesktop.org">
+    <bookmark:icon name="folder-cloud"/>
+   </metadata>
+   <metadata owner="http://www.kde.org">
+    <ID>$(date +%s%N)</ID>
+    <IsHidden>false</IsHidden>
+   </metadata>
+  </info>
+ </bookmark>
+</xbel>
+EOF
+    fi
+
+    cat <<EOF
+
+=====================================================
+HƯỚNG DẪN SỬ DỤNG GOOGLE DRIVE - KUBUNTU / KDE
+=====================================================
+
+1. Thư mục gắn tại máy : $TARGET_DIR
+2. Trạng thái kết nối   : ĐÃ KẾT NỐI VÀ CHẠY TỰ ĐỘNG
+3. Sử dụng:
+   - Mở Dolphin: Thư mục "Google Drive" đã có sẵn ở cột Places bên trái.
+   - Toàn bộ ứng dụng (Văn phòng, Đồ họa, Trình duyệt) có thể đọc/ghi trực tiếp
+     vào $TARGET_DIR như một ổ cứng nội bộ.
+
+=====================================================
+
+EOF
 
 fi
 
 #=========================================================
-# 11. SUMMARY
+# 8. SUMMARY
 #=========================================================
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
 
-echo
 echo -e "${GREEN}====================================================="
 echo "         GOOGLE DRIVE SETUP COMPLETED"
 echo "====================================================="
@@ -350,6 +311,6 @@ echo "Phương thức  : $INSTALL_MODE"
 echo "Thời gian    : ${ELAPSED} giây"
 
 echo
-success "Hoàn tất cài đặt Google Drive Integrator 2.6."
+success "Hoàn tất cài đặt Google Drive Integrator 3.1."
 
 exit 0
