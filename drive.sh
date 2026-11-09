@@ -4,7 +4,7 @@
 # Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 3.3 ngày 09.11.2026
+# Version : 3.5 ngày 09.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -31,7 +31,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 3.3"
+echo "          GOOGLE DRIVE INTEGRATOR 3.5"
 echo "          Linux Mint / Kubuntu / Ubuntu KDE"
 echo "          Author: Long Nguyen"
 echo "====================================================="
@@ -171,7 +171,7 @@ elif [[ "$IS_KDE" == true ]]; then
         success "Cài đặt hoàn tất."
     fi
 
-    # Cấu hình systemd user service chuẩn Type=notify như anh vừa chạy thành công
+    # Cấu hình systemd user service chuẩn notify
     SERVICE_DIR="$HOME/.config/systemd/user"
     SERVICE_FILE="$SERVICE_DIR/rclone-gdrive.service"
     mkdir -p "$SERVICE_DIR"
@@ -184,15 +184,16 @@ Wants=network-online.target
 
 [Service]
 Type=notify
+ExecStartPre=/bin/sh -c 'fusermount -uz %h/GoogleDrive 2>/dev/null || true'
 ExecStart=/usr/bin/rclone mount drive: %h/GoogleDrive \
   --vfs-cache-mode full \
   --vfs-cache-max-age 24h \
   --vfs-read-chunk-size 32M \
   --buffer-size 32M \
   --dir-cache-time 72h
-ExecStop=/bin/fusermount -u %h/GoogleDrive
+ExecStop=/bin/fusermount -uz %h/GoogleDrive
 Restart=on-failure
-RestartSec=10
+RestartSec=5
 
 [Install]
 WantedBy=default.target
@@ -234,7 +235,7 @@ EOF
 
 elif [[ "$IS_KDE" == true ]]; then
 
-    # Kiểm tra xem remote 'drive' đã có token chưa
+    # Kiểm tra xem remote 'drive' đã có cấu hình và token hợp lệ chưa
     TOKEN_VALID=false
     if [[ -f "$HOME/.config/rclone/rclone.conf" ]]; then
         if grep -q "token =" "$HOME/.config/rclone/rclone.conf" 2>/dev/null; then
@@ -245,35 +246,31 @@ elif [[ "$IS_KDE" == true ]]; then
     if [[ "$TOKEN_VALID" == false ]]; then
         echo
         echo -e "${YELLOW}=====================================================${NC}"
-        echo -e "${YELLOW}          BƯỚC KẾT NỐI TÀI KHOẢN GOOGLE              ${NC}"
+        echo -e "${YELLOW}       ĐANG KẾT NỐI TÀI KHOẢN GOOGLE DRIVE           ${NC}"
         echo -e "${YELLOW}=====================================================${NC}"
-        echo "Script sẽ mở trình cấu hình Rclone."
-        echo "Anh chỉ cần bấm các phím sau:"
-        echo "  1. Gõ: n (rồi Enter)"
-        echo "  2. Gõ: drive (rồi Enter)"
-        echo "  3. Gõ: drive (rồi Enter - chọn Google Drive)"
-        echo "  4. Bấm ENTER qua các mục: client_id, client_secret"
-        echo "  5. Gõ: 1 (rồi Enter - chọn Full access scope)"
-        echo "  6. Bấm ENTER tiếp cho đến khi TRÌNH DUYỆT TỰ ĐỘNG MỞ ĐĂNG NHẬP"
-        echo "  7. Đăng nhập xong quay lại terminal bấm: Enter (chọn Y/Default)"
-        echo "  8. Gõ: q (rồi Enter để thoát)"
-        echo -e "${YELLOW}-----------------------------------------------------${NC}"
-        read -p "Nhấn phím [Enter] để bắt đầu kết nối..." dummy
+        echo "Script đang tự động nạp cấu hình (n -> drive -> drive -> 1 -> y -> n -> y -> q)."
+        echo -e "${GREEN}>> TRÌNH DUYỆT SẼ TỰ ĐỘNG BẬT LÊN ĐỂ ĐĂNG NHẬP GMAIL.${NC}"
+        echo -e "${GREEN}>> ANH CHỈ CẦN BẤM 'CHO PHÉP' (ALLOW) TRÊN WEB LÀ XONG!${NC}"
+        echo "-----------------------------------------------------"
 
-        rclone config
+        # Tự động nạp sẵn chuỗi tương tác vào rclone config
+        printf "n\ndrive\ndrive\n\n\n1\n\nn\ny\nn\ny\nq\n" | rclone config
     fi
 
-    # Dọn dẹp mount point kẹt trước khi kích hoạt
-    fusermount -u "$TARGET_DIR" 2>/dev/null || true
+    # Giải phóng thư mục nếu còn kẹt mount cũ
+    fusermount -uz "$TARGET_DIR" 2>/dev/null || true
 
-    log "Kích hoạt và chạy Systemd Mount Service..."
+    log "Kích hoạt và nạp chạy Systemd Mount Service..."
     systemctl --user enable --now rclone-gdrive.service 2>/dev/null || true
     sleep 3
 
-    # Ghim thư mục vào Dolphin Places nếu chưa có
+    # Ghim thư mục vào Dolphin Places (Xóa liên kết KIO cũ nếu có)
     USER_PLACES="$HOME/.local/share/user-places.xbel"
-    if [[ -f "$USER_PLACES" ]] && ! grep -q "GoogleDrive" "$USER_PLACES"; then
-        log "Ghim thư mục Google Drive vào thanh điều hướng Dolphin..."
+    if [[ -f "$USER_PLACES" ]]; then
+        sed -i '/<bookmark href="gdrive:\/">/,/<\/bookmark>/d' "$USER_PLACES" 2>/dev/null || true
+        sed -i '/<bookmark href="file:\/\/.*GoogleDrive">/,/<\/bookmark>/d' "$USER_PLACES" 2>/dev/null || true
+        
+        log "Ghim lối tắt Google Drive vào thanh điều hướng Dolphin..."
         sed -i 's|</xbel>||' "$USER_PLACES"
         cat <<EOF >> "$USER_PLACES"
  <bookmark href="file://$TARGET_DIR">
@@ -299,18 +296,18 @@ HƯỚNG DẪN SỬ DỤNG GOOGLE DRIVE - KUBUNTU / KDE
 =====================================================
 
 1. Thư mục gắn tại máy : $TARGET_DIR
-2. Trạng thái mount    :
+2. Trạng thái kết nối   :
 EOF
 
     if systemctl --user is-active --quiet rclone-gdrive.service; then
         cat <<'EOF'
-   -> ĐÃ KẾT NỐI THÀNH CÔNG (Active Running).
+   -> KẾT NỐI THÀNH CÔNG (Active Running).
    -> File đã sẵn sàng trong Dolphin -> Cột Places bên trái!
 EOF
     else
         cat <<'EOF'
-   -> CHƯA KÍCH HOẠT ĐƯỢC: Có thể do chưa hoàn tất đăng nhập Google.
-   -> Chạy lại script và đăng nhập để kích hoạt service.
+   -> CHƯA KÍCH HOẠT: Hãy đảm bảo đã hoàn tất xác thực trên trình duyệt.
+   -> Chạy lại script để kích hoạt service.
 EOF
     fi
 
@@ -338,6 +335,6 @@ echo "Phương thức  : $INSTALL_MODE"
 echo "Thời gian    : ${ELAPSED} giây"
 
 echo
-success "Hoàn tất cài đặt Google Drive Integrator 3.3."
+success "Hoàn tất cài đặt Google Drive Integrator 3.5."
 
 exit 0
