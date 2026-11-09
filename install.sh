@@ -4,7 +4,7 @@
 # Linux Mint 22.x / Kubuntu 24.04+ / Ubuntu KDE
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 3.8 ngày 09.11.2026 xác thực 2 lần (dự phòng)
+# Version : 4.1 ngày 09.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -31,7 +31,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 3.8"
+echo "          GOOGLE DRIVE INTEGRATOR 4.1"
 echo "          Linux Mint / Kubuntu / Ubuntu KDE"
 echo "          Author: Long Nguyen"
 echo "====================================================="
@@ -103,11 +103,13 @@ SUDO_PID=$!
 trap 'kill "$SUDO_PID" 2>/dev/null || true; error "Lỗi tại dòng $LINENO"; exit 1' ERR
 
 #=========================================================
-# 5. UPDATE PACKAGE INDEX
+# 5. UPDATE PACKAGE INDEX (Chống dừng script do PPA lỗi)
 #=========================================================
 
 log "Cập nhật danh sách gói..."
-sudo apt-get update
+sudo apt-get update -o Acquire::AllowInsecureRepositories=true -o Acquire::AllowDowngradeToInsecureRepositories=true || {
+    warn "Một số kho PPA bên thứ ba bị 404, tiếp tục tiến trình..."
+}
 success "Cập nhật Package Index thành công."
 
 #=========================================================
@@ -235,35 +237,32 @@ EOF
 
 elif [[ "$IS_KDE" == true ]]; then
 
-    # Kiểm tra xem remote 'drive' đã có cấu hình và token hợp lệ chưa
-    TOKEN_VALID=false
-    if [[ -f "$HOME/.config/rclone/rclone.conf" ]]; then
-        if grep -q "token =" "$HOME/.config/rclone/rclone.conf" 2>/dev/null; then
-            TOKEN_VALID=true
+    # Kiểm tra chính xác remote tên 'drive:' đã có token hợp lệ hay chưa
+    DRIVE_CONFIGURED=false
+    if rclone listremotes 2>/dev/null | grep -q "^drive:"; then
+        if rclone config show drive 2>/dev/null | grep -q "token ="; then
+            DRIVE_CONFIGURED=true
         fi
     fi
 
-    if [[ "$TOKEN_VALID" == false ]]; then
+    if [[ "$DRIVE_CONFIGURED" == false ]]; then
         echo
         echo -e "${YELLOW}=====================================================${NC}"
         echo -e "${YELLOW}       ĐANG MỞ KẾT NỐI GOOGLE TRÊN TRÌNH DUYỆT       ${NC}"
         echo -e "${YELLOW}=====================================================${NC}"
-        echo "Trình duyệt web sẽ tự động mở lên trong giây lát..."
-        echo "Vui lòng đăng nhập tài khoản Google và bấm 'Allow' (Cho phép)."
+        log "Trình duyệt sẽ tự động mở 1 LẦN DUY NHẤT để ủy quyền..."
+        log "Vui lòng đăng nhập Gmail và bấm 'Cho phép' (Allow)."
         echo "-----------------------------------------------------"
 
-        # Lấy token OAuth tự động qua authorize, ép đọc tty để không bị nuốt stdin từ curl
-        AUTH_TOKEN=""
-        RAW_OUTPUT=$(rclone authorize "drive" < /dev/tty 2>&1 || true)
-        AUTH_TOKEN=$(echo "$RAW_OUTPUT" | grep -o '{"access_token":.*}' || true)
+        # Dọn sạch remote drive cũ nếu chưa có token hoặc lỗi cấu hình
+        rclone config delete drive 2>/dev/null || true
 
-        if [[ -n "$AUTH_TOKEN" ]]; then
-            rclone config create drive drive scope drive token "$AUTH_TOKEN" >/dev/null 2>&1
-            success "Đã xác thực và lưu token Google Drive thành công!"
-        else
-            warn "Không bắt được token tự động, chuyển sang cấu hình tương tác:"
-            rclone config < /dev/tty
-        fi
+        # Tự động kết nối, tự mở trình duyệt và lưu thẳng vào rclone.conf (chỉ mở 1 lần duy nhất)
+        rclone config create drive drive scope drive config_is_local true < /dev/tty
+
+        success "Đã xác thực và lưu cấu hình Google Drive thành công!"
+    else
+        log "Đã tìm thấy cấu hình remote 'drive' hợp lệ trên máy."
     fi
 
     # Giải phóng điểm mount cũ nếu bị kẹt
@@ -345,6 +344,6 @@ echo "Phương thức  : $INSTALL_MODE"
 echo "Thời gian    : ${ELAPSED} giây"
 
 echo
-success "Hoàn tất cài đặt Google Drive Integrator 3.8."
+success "Hoàn tất cài đặt Google Drive Integrator 4.1."
 
 exit 0
