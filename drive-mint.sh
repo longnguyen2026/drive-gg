@@ -4,7 +4,7 @@
 # Linux Mint 21.x / 22.x / Kubuntu / Ubuntu KDE & Cinnamon
 # Author  : Long Nguyen
 # Script  : install-google-drive.sh
-# Version : 4.2 ngày 10.11.2026
+# Version : 4.3 ngày 10.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -31,7 +31,7 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 4.2"
+echo "          GOOGLE DRIVE INTEGRATOR 4.3"
 echo "      Linux Mint (Cinnamon) / Kubuntu (KDE Plasma)"
 echo "          Author: Long Nguyen"
 echo "====================================================="
@@ -58,6 +58,11 @@ DESKTOP_INFO="${DESKTOP_INFO,,}"
 
 log "Hệ điều hành: $OS_NAME $OS_VERSION"
 log "Desktop: ${DESKTOP_INFO:-Default}"
+
+# Thiết lập phiên D-Bus an toàn cho systemd user
+CURRENT_UID=$(id -u)
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$CURRENT_UID}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
 
 #=========================================================
 # 2. SUDO CHECK & KEEPALIVE
@@ -137,7 +142,8 @@ RestartSec=5
 WantedBy=default.target
 EOF
 
-systemctl --user daemon-reload
+# Nạp lại daemon với bọc an toàn tránh ngắt script nếu lỗi D-Bus bus
+systemctl --user daemon-reload 2>/dev/null || true
 
 kill "$SUDO_PID" 2>/dev/null || true
 
@@ -173,7 +179,7 @@ fi
 fusermount -uz "$TARGET_DIR" 2>/dev/null || true
 
 log "Kích hoạt và nạp chạy Systemd Mount Service..."
-systemctl --user daemon-reload
+systemctl --user daemon-reload 2>/dev/null || true
 systemctl --user enable --now rclone-gdrive.service 2>/dev/null || true
 sleep 3
 
@@ -229,7 +235,7 @@ echo -e "${NC}"
 echo "Hệ điều hành : $OS_NAME $OS_VERSION"
 echo "Thư mục gắn  : $TARGET_DIR"
 echo "Trạng thái   : "
-if systemctl --user is-active --quiet rclone-gdrive.service; then
+if systemctl --user is-active --quiet rclone-gdrive.service 2>/dev/null; then
     echo -e "  -> ${GREEN}KẾT NỐI THÀNH CÔNG (Active Running).${NC}"
     echo "  -> Toàn bộ dữ liệu Drive đã sẵn sàng trong File Manager!"
 else
@@ -238,6 +244,6 @@ fi
 echo "Thời gian    : ${ELAPSED} giây"
 
 echo
-success "Hoàn tất cài đặt Google Drive Integrator 4.2."
+success "Hoàn tất cài đặt Google Drive Integrator 4.3."
 
 exit 0
