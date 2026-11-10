@@ -1,8 +1,13 @@
 # Lệnh cài tự động Google Drive cho Kubuntu và Mint
 ```` bash
 bash <(curl -fsSL https://raw.githubusercontent.com/longnguyen2026/drive-gg/main/install.sh)
-
 ````
+
+```` bash
+bash <(curl -fsSL https://raw.githubusercontent.com/longnguyen2026/drive-gg/main/drive-mint.sh)
+````
+
+
 # Gỡ và dọn dẹp drive cũ
 ```` bash
 bash <(curl -fsSL https://raw.githubusercontent.com/longnguyen2026/drive-gg/main/remove-drive.sh)
