@@ -4,7 +4,7 @@
 # Method  : Rclone Native FUSE Mount + Nemo Bookmark
 # Author  : Long Nguyen
 # Script  : drive-mint.sh
-# Version : 1.0 ngày 10.11.2026
+# Version : 2.0 ngày 10.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -38,7 +38,7 @@ echo "====================================================="
 echo -e "${NC}"
 
 #=========================================================
-# 1. KIỂM TRA MÔI TRƯỜNG & USER
+# 1. KIỂM TRA MÔI TRƯỜNG & TỰ ĐỘNG BẮT DISPLAY / D-BUS
 #=========================================================
 
 [[ $EUID -ne 0 ]] || die \
@@ -49,11 +49,23 @@ CURRENT_USER="$USER"
 CURRENT_UID="$(id -u)"
 TARGET_DIR="$HOME/GoogleDrive"
 
-# Thiết lập D-Bus môi trường tránh lỗi Permission denied khi gọi systemctl --user
+# Tự động phát hiện DISPLAY nếu chạy qua RustDesk / SSH / su
+if [[ -z "${DISPLAY:-}" ]]; then
+    DETECTED_DISPLAY=$(who | grep -o '(:[0-9]*' | tr -d '(:' | head -n 1 || true)
+    if [[ -n "$DETECTED_DISPLAY" ]]; then
+        export DISPLAY=":$DETECTED_DISPLAY"
+    else
+        export DISPLAY=":0"
+    fi
+fi
+
+# Tự động gán quyền Xauthority và D-Bus
+export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$CURRENT_UID}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-X-Cinnamon}"
 
-log "User thực thi: $CURRENT_USER (UID: $CURRENT_UID)"
+log "User thực thi: $CURRENT_USER (UID: $CURRENT_UID, DISPLAY: $DISPLAY)"
 log "Thư mục mount: $TARGET_DIR"
 
 #=========================================================
@@ -68,7 +80,7 @@ SUDO_PID=$!
 trap 'kill "$SUDO_PID" 2>/dev/null || true; error "Lỗi tại dòng $LINENO"; exit 1' ERR
 
 #=========================================================
-# 3. CẬP NHẬT GÓI & CÀI ĐẶT RCLONE + FUSE3
+# 3. CẬP NHẬT GÓI & CÀI ĐẶT RCLONE + FUSE3 + XDG-UTILS
 #=========================================================
 
 log "Cập nhật danh sách gói..."
@@ -76,7 +88,7 @@ sudo apt-get update -o Acquire::AllowInsecureRepositories=true -o Acquire::Allow
     warn "Bỏ qua cảnh báo repository để tiếp tục tiến trình..."
 }
 
-PACKAGES=(rclone fuse3)
+PACKAGES=(rclone fuse3 xdg-utils)
 MISSING_PACKAGES=()
 
 for pkg in "${PACKAGES[@]}"; do
@@ -132,7 +144,7 @@ EOF
 systemctl --user daemon-reload 2>/dev/null || true
 
 #=========================================================
-# 5. XÁC THỰC OAUTH TỰ ĐỘNG MỞ TRÌNH DUYỆT (1 LẦN DUY NHẤT)
+# 5. XÁC THỰC OAUTH (TỰ ĐỘNG BẬT TRÌNH DUYỆT ĐĂNG NHẬP GOOGLE)
 #=========================================================
 
 DRIVE_CONFIGURED=false
@@ -147,14 +159,17 @@ if [[ "$DRIVE_CONFIGURED" == false ]]; then
     echo -e "${YELLOW}=====================================================${NC}"
     echo -e "${YELLOW}       ĐANG MỞ KẾT NỐI GOOGLE TRÊN TRÌNH DUYỆT       ${NC}"
     echo -e "${YELLOW}=====================================================${NC}"
-    log "Trình duyệt web sẽ tự động mở để cấp quyền truy cập..."
+    log "Đang kích hoạt trình duyệt trên màn hình desktop ($DISPLAY)..."
     log "Vui lòng đăng nhập Gmail và bấm 'Cho phép' (Allow)."
     echo "-----------------------------------------------------"
 
     # Xóa remote drive cũ nếu lỗi/thiếu token
     rclone config delete drive 2>/dev/null || true
 
-    # Kích hoạt flow OAuth cục bộ, nhận luồng từ /dev/tty
+    # Đảm bảo quyền mở ứng dụng đồ họa trên màn hình
+    xhost +si:localuser:"$CURRENT_USER" 2>/dev/null || true
+
+    # Chạy lệnh cấu hình tự động mở trình duyệt
     rclone config create drive drive scope drive config_is_local true < /dev/tty
 
     success "Đã xác thực và lưu token Google Drive thành công!"
