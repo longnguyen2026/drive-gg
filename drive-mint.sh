@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #=========================================================
 # Google Drive Integrator for Linux Mint (Cinnamon)
-# Method  : Rclone Native FUSE Mount + Nemo Bookmark + Autostart
-# Target  : Tự động phát hiện user Desktop thực tế (nhanvien)
+# Method  : Rclone Native FUSE Mount + Nemo Bookmark + Autostart + MIME Fix
+# Target  : Tự động phát hiện user Desktop thực tế (nhanvien/...)
 # Author  : Long Nguyen
 # Script  : drive-mint.sh
-# Version : 3.1 ngày 10.11.2026
+# Version : 3.2 ngày 10.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -71,7 +71,7 @@ export XDG_RUNTIME_DIR="/run/user/$TARGET_UID"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 export XDG_CURRENT_DESKTOP="X-Cinnamon"
 
-# Cấp quyền kết nối giao diện X11 cho mọi tiến trình nội bộ
+# Cấp quyền kết nối giao diện X11
 xhost +local: 2>/dev/null || true
 xhost +si:localuser:"$RUNNING_USER" 2>/dev/null || true
 xhost +si:localuser:"$TARGET_USER" 2>/dev/null || true
@@ -133,15 +133,15 @@ kill "$SUDO_PID" 2>/dev/null || true
 # 4. CHUẨN BỊ THƯ MỤC MOUNT VÀ CẤU HÌNH CHO TARGET_USER
 #=========================================================
 
-sudo mkdir -p "$TARGET_DIR" "$TARGET_HOME/.config/rclone" "$TARGET_HOME/.config/autostart" "$TARGET_HOME/.config/gtk-3.0"
-sudo chown -R "$TARGET_USER:$TARGET_USER" "$TARGET_DIR" "$TARGET_HOME/.config/rclone" "$TARGET_HOME/.config/autostart" "$TARGET_HOME/.config/gtk-3.0"
+sudo mkdir -p "$TARGET_DIR" "$TARGET_HOME/.config/rclone" "$TARGET_HOME/.config/autostart" "$TARGET_HOME/.config/gtk-3.0" "$TARGET_HOME/.local/share/applications"
+sudo chown -R "$TARGET_USER:$TARGET_USER" "$TARGET_DIR" "$TARGET_HOME/.config/rclone" "$TARGET_HOME/.config/autostart" "$TARGET_HOME/.config/gtk-3.0" "$TARGET_HOME/.local/share"
 
-# Nếu user đang chạy (it) đã có cấu hình rclone hợp lệ, đồng bộ ngay sang TARGET_USER
+# Nếu user điều khiển (it) đã có cấu hình rclone hợp lệ, đồng bộ sang TARGET_USER
 if [[ "$RUNNING_USER" != "$TARGET_USER" ]] && [[ -f "$HOME/.config/rclone/rclone.conf" ]]; then
     if grep -q "token =" "$HOME/.config/rclone/rclone.conf" 2>/dev/null; then
         sudo cp -f "$HOME/.config/rclone/rclone.conf" "$TARGET_HOME/.config/rclone/rclone.conf"
         sudo chown "$TARGET_USER:$TARGET_USER" "$TARGET_HOME/.config/rclone/rclone.conf"
-        log "Đã đồng bộ file cấu hình token từ $RUNNING_USER sang $TARGET_USER."
+        log "Đã đồng bộ file cấu hình token sang tài khoản $TARGET_USER."
     fi
 fi
 
@@ -196,7 +196,7 @@ sudo -u "$TARGET_USER" rclone mount drive: "$TARGET_DIR" \
   --dir-cache-time 72h --daemon
 sleep 2
 
-# Tạo Autostart Desktop Entry (Bảo đảm luôn tự mount khi nhanvien đăng nhập vào máy)
+# Tạo Autostart Desktop Entry (Tự động mount mỗi khi đăng nhập vào máy)
 AUTOSTART_FILE="$TARGET_HOME/.config/autostart/rclone-gdrive.desktop"
 sudo -u "$TARGET_USER" tee "$AUTOSTART_FILE" > /dev/null <<EOF
 [Desktop Entry]
@@ -204,73 +204,12 @@ Type=Application
 Exec=/usr/bin/rclone mount drive: $TARGET_DIR --vfs-cache-mode full --daemon
 Hidden=false
 NoDisplay=false
-X-GNOME-Autostart-enabled=true#!/usr/bin/env bash
-#=========================================================
-# Google Drive Integrator for Linux Mint (Cinnamon)
-# Method  : Rclone Native FUSE Mount + Nemo Bookmark
-# Target  : Tự động phát hiện user Desktop (nhanvien) dù chạy qua IT/RustDesk
-# Author  : Long Nguyen
-# Script  : drive-mint.sh
-# Version : 3.0 ngày 10.11.2026
-#=========================================================
-
-set -Eeuo pipefail
-
-SCRIPT_NAME="$(basename "$0")"
-START_TIME=$(date +%s)
-
-RED='\033[1;31m'
-GREEN='\033[1;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[1;34m'
-CYAN='\033[1;36m'
-NC='\033[0m'
-
-log()     { printf "${GREEN}[INFO]${NC} %s\n" "$1"; }
-warn()    { printf "${YELLOW}[WARN]${NC} %s\n" "$1"; }
-error()   { printf "${RED}[ERROR]${NC} %s\n" "$1"; }
-success() { printf "${CYAN}[ OK ]${NC} %s\n" "$1"; }
-die()     { error "$1"; exit 1; }
-
-trap 'error "Lỗi tại dòng $LINENO"; exit 1' ERR
-
-clear 2>/dev/null || true
-
-echo -e "${BLUE}"
-echo "====================================================="
-echo "       GOOGLE DRIVE INTEGRATOR FOR LINUX MINT"
-echo "           Rclone Native FUSE (Nemo Places)"
-echo "                 Author: Long Nguyen"
-echo "====================================================="
-echo -e "${NC}"
-
-#=========================================================
-# 1. TỰ ĐỘNG XÁC ĐỊNH USER DESKTOP ĐÍCH (DESKTOP GUI USER)
-#=========================================================
-
-[[ $EUID -ne 0 ]] || die \
-"Không chạy script bằng root hoặc sudo trực tiếp!
-Hãy chạy với quyền user thông thường: bash $SCRIPT_NAME"
-
-RUNNING_USER="$USER"
-
-# Phát hiện user đang thực sự ngồi trước màn hình Desktop Mint (:0)
-ACTIVE_GUI_USER=$(who | awk '$0 ~ /(:0|\(:[0-9]\))/ {print $1; exit}' || true)
-if [[ -z "$ACTIVE_GUI_USER" ]]; then
-    ACTIVE_GUI_USER="$RUNNING_USER"
-fi
-
-TARGET_USER="$ACTIVE_GUI_USER"
-TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
-TARGET_UID=$(id -u "$TARGET_USER")
-TARGET_DIR="$TARGET_HOME/GoogleDrive"
-
-
+X-GNOME-Autostart-enabled=true
 Name=Mount Google Drive
 Comment=Tu dong ket noi Google Drive khi dang nhap
 EOF
 
-# Ghim lối tắt vào Nemo Places (GTK 3.0 Bookmarks)
+# Ghim lối tắt vào thanh Places của Nemo (GTK 3.0 Bookmarks)
 GTK_BOOKMARKS="$TARGET_HOME/.config/gtk-3.0/bookmarks"
 sudo -u "$TARGET_USER" touch "$GTK_BOOKMARKS"
 sudo -u "$TARGET_USER" sed -i '/GoogleDrive/d' "$GTK_BOOKMARKS"
@@ -278,7 +217,40 @@ echo "file://$TARGET_DIR Google Drive" | sudo -u "$TARGET_USER" tee -a "$GTK_BOO
 success "Đã ghim lối tắt Google Drive vào trình quản lý tệp Nemo."
 
 #=========================================================
-# 7. TỔNG KẾT
+# 7. CẤU HÌNH MẶC ĐỊNH MỞ FILE OFFICE BẰNG WPS OFFICE
+#=========================================================
+
+if command -v wps >/dev/null 2>&1 || [[ -f /usr/share/applications/wps-office-et.desktop ]]; then
+    log "Cấu hình liên kết định dạng mặc định cho WPS Office..."
+    MIME_FILE="$TARGET_HOME/.config/mimeapps.list"
+    sudo -u "$TARGET_USER" touch "$MIME_FILE"
+
+    sudo -u "$TARGET_USER" bash -c "
+        sed -i '/spreadsheetml/d; /vnd.ms-excel/d; /msexcel/d; /wordprocessingml/d; /msword/d; /presentationml/d; /vnd.ms-powerpoint/d' '$MIME_FILE'
+        
+        if ! grep -q '\\[Default Applications\\]' '$MIME_FILE'; then
+            echo '[Default Applications]' >> '$MIME_FILE'
+        fi
+        
+        cat <<EOF >> '$MIME_FILE'
+application/vnd.openxmlformats-officedocument.spreadsheetml.sheet=wps-office-et.desktop
+application/vnd.ms-excel=wps-office-et.desktop
+application/msexcel=wps-office-et.desktop
+application/x-msexcel=wps-office-et.desktop
+text/csv=wps-office-et.desktop
+application/vnd.openxmlformats-officedocument.wordprocessingml.document=wps-office-wps.desktop
+application/msword=wps-office-wps.desktop
+application/vnd.openxmlformats-officedocument.presentationml.presentation=wps-office-wpp.desktop
+application/vnd.ms-powerpoint=wps-office-wpp.desktop
+EOF
+    "
+
+    sudo -u "$TARGET_USER" update-desktop-database "$TARGET_HOME/.local/share/applications/" 2>/dev/null || true
+    success "Đã thiết lập WPS Office làm ứng dụng mặc định cho XLSX, DOCX, PPTX."
+fi
+
+#=========================================================
+# 8. TỔNG KẾT
 #=========================================================
 
 END_TIME=$(date +%s)
@@ -298,6 +270,7 @@ if mountpoint -q "$TARGET_DIR"; then
     echo -e "${GREEN}KẾT NỐI THÀNH CÔNG (Mounted & Active).${NC}"
     echo "  -> Đã ghim vào thanh Devices/Bookmarks của Nemo!"
     echo "  -> Đã kích hoạt Autostart tự động chạy khi mở máy."
+    echo "  -> Đã cấu hình mặc định mở file bằng WPS Office."
 else
     echo -e "${YELLOW}Đang mount ngầm trong nền.${NC}"
 fi
