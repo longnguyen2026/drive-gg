@@ -2,9 +2,10 @@
 #=========================================================
 # Google Drive Integrator for Linux Mint (Cinnamon)
 # Method  : Rclone Native FUSE Mount + Nemo Bookmark
+# Target  : Tự động phát hiện user Desktop (nhanvien) dù chạy qua IT/RustDesk
 # Author  : Long Nguyen
 # Script  : drive-mint.sh
-# Version : 2.2 ngày 10.11.2026
+# Version : 3.0 ngày 10.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -38,39 +39,44 @@ echo "====================================================="
 echo -e "${NC}"
 
 #=========================================================
-# 1. KIỂM TRA MÔI TRƯỜNG & TỰ ĐỘNG BẮT DISPLAY / GUI SESSION
+# 1. TỰ ĐỘNG XÁC ĐỊNH USER DESKTOP ĐÍCH (DESKTOP GUI USER)
 #=========================================================
 
 [[ $EUID -ne 0 ]] || die \
 "Không chạy script bằng root hoặc sudo trực tiếp!
 Hãy chạy với quyền user thông thường: bash $SCRIPT_NAME"
 
-CURRENT_USER="$USER"
-CURRENT_UID="$(id -u)"
-TARGET_DIR="$HOME/GoogleDrive"
+RUNNING_USER="$USER"
 
-# Tìm tài khoản người dùng đang đăng nhập trên màn hình desktop thực tế
+# Phát hiện user đang thực sự ngồi trước màn hình Desktop Mint (:0)
 ACTIVE_GUI_USER=$(who | awk '$0 ~ /(:0|\(:[0-9]\))/ {print $1; exit}' || true)
-ACTIVE_GUI_USER="${ACTIVE_GUI_USER:-$CURRENT_USER}"
+if [[ -z "$ACTIVE_GUI_USER" ]]; then
+    ACTIVE_GUI_USER="$RUNNING_USER"
+fi
 
+TARGET_USER="$ACTIVE_GUI_USER"
+TARGET_HOME=$(getent passwd "$TARGET_USER" | cut -d: -f6)
+TARGET_UID=$(id -u "$TARGET_USER")
+TARGET_DIR="$TARGET_HOME/GoogleDrive"
+
+# Thiết lập môi trường hiển thị đồ họa
 export DISPLAY=":0"
-
-# Mượn quyền Xauthority của user đang sở hữu desktop
-if [[ -f "/home/$ACTIVE_GUI_USER/.Xauthority" ]]; then
-    export XAUTHORITY="/home/$ACTIVE_GUI_USER/.Xauthority"
+if [[ -f "$TARGET_HOME/.Xauthority" ]]; then
+    export XAUTHORITY="$TARGET_HOME/.Xauthority"
 else
     export XAUTHORITY="$HOME/.Xauthority"
 fi
 
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$CURRENT_UID}"
-export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
-export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-X-Cinnamon}"
+export XDG_RUNTIME_DIR="/run/user/$TARGET_UID"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+export XDG_CURRENT_DESKTOP="X-Cinnamon"
 
-# Cấp phép cho tiến trình mở cửa sổ GUI lên màn hình
+# Cấp quyền kết nối giao diện X11
 xhost +local: 2>/dev/null || true
-xhost +si:localuser:"$CURRENT_USER" 2>/dev/null || true
+xhost +si:localuser:"$RUNNING_USER" 2>/dev/null || true
+xhost +si:localuser:"$TARGET_USER" 2>/dev/null || true
 
-# Nhận diện trình duyệt sẵn có trên hệ thống để Rclone gọi chính xác
+# Tự động gán trình duyệt
 if command -v google-chrome >/dev/null 2>&1; then
     export BROWSER="google-chrome"
 elif command -v microsoft-edge >/dev/null 2>&1; then
@@ -79,9 +85,9 @@ elif command -v firefox >/dev/null 2>&1; then
     export BROWSER="firefox"
 fi
 
-log "User thực thi : $CURRENT_USER (GUI User: $ACTIVE_GUI_USER, DISPLAY: $DISPLAY)"
-log "Trình duyệt   : ${BROWSER:-Mặc định hệ thống}"
-log "Thư mục mount : $TARGET_DIR"
+log "User điều khiển : $RUNNING_USER"
+log "User đích       : $TARGET_USER (UID: $TARGET_UID)"
+log "Thư mục mount   : $TARGET_DIR"
 
 #=========================================================
 # 2. XÁC THỰC QUYỀN SUDO & KEEPALIVE
@@ -99,6 +105,7 @@ trap 'kill "$SUDO_PID" 2>/dev/null || true; error "Lỗi tại dòng $LINENO"; e
 #=========================================================
 
 log "Cập nhật danh sách gói..."
+# Xử lý tự động nhả apt lock nếu mint-refresh-cache đang chạy ngầm
 sudo apt-get update -o Acquire::AllowInsecureRepositories=true -o Acquire::AllowDowngradeToInsecureRepositories=true || {
     warn "Bỏ qua cảnh báo repository để tiếp tục tiến trình..."
 }
@@ -124,15 +131,15 @@ fi
 kill "$SUDO_PID" 2>/dev/null || true
 
 #=========================================================
-# 4. THIẾT LẬP SYSTEMD USER SERVICE
+# 4. THIẾT LẬP SYSTEMD USER SERVICE CHO TARGET_USER
 #=========================================================
 
-mkdir -p "$TARGET_DIR"
-SERVICE_DIR="$HOME/.config/systemd/user"
+sudo -u "$TARGET_USER" mkdir -p "$TARGET_DIR"
+SERVICE_DIR="$TARGET_HOME/.config/systemd/user"
 SERVICE_FILE="$SERVICE_DIR/rclone-gdrive.service"
-mkdir -p "$SERVICE_DIR"
+sudo -u "$TARGET_USER" mkdir -p "$SERVICE_DIR"
 
-cat <<'EOF' > "$SERVICE_FILE"
+sudo -u "$TARGET_USER" tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=Mount Google Drive via Rclone
 After=network-online.target
@@ -155,16 +162,16 @@ RestartSec=5
 WantedBy=default.target
 EOF
 
-# Nạp lại systemd an toàn
-systemctl --user daemon-reload 2>/dev/null || true
+# Nạp lại systemd an toàn dưới phiên của TARGET_USER
+sudo -u "$TARGET_USER" XDG_RUNTIME_DIR="/run/user/$TARGET_UID" systemctl --user daemon-reload 2>/dev/null || true
 
 #=========================================================
-# 5. XÁC THỰC OAUTH (TỰ ĐỘNG MỞ TRÌNH DUYỆT 1 LẦN DUY NHẤT)
+# 5. XÁC THỰC OAUTH CHO TARGET_USER (MỞ TRÌNH DUYỆT 1 LẦN)
 #=========================================================
 
 DRIVE_CONFIGURED=false
-if rclone listremotes 2>/dev/null | grep -q "^drive:"; then
-    if rclone config show drive 2>/dev/null | grep -q "token ="; then
+if sudo -u "$TARGET_USER" rclone listremotes 2>/dev/null | grep -q "^drive:"; then
+    if sudo -u "$TARGET_USER" rclone config show drive 2>/dev/null | grep -q "token ="; then
         DRIVE_CONFIGURED=true
     fi
 fi
@@ -174,41 +181,48 @@ if [[ "$DRIVE_CONFIGURED" == false ]]; then
     echo -e "${YELLOW}=====================================================${NC}"
     echo -e "${YELLOW}       ĐANG MỞ KẾT NỐI GOOGLE TRÊN TRÌNH DUYỆT       ${NC}"
     echo -e "${YELLOW}=====================================================${NC}"
-    log "Trình duyệt web sẽ tự động mở lên màn hình desktop..."
+    log "Trình duyệt web sẽ tự động mở lên màn hình desktop của $TARGET_USER..."
     log "Vui lòng đăng nhập Gmail và bấm 'Cho phép' (Allow)."
     echo "-----------------------------------------------------"
 
     # Xóa remote drive cũ nếu lỗi/thiếu token
-    rclone config delete drive 2>/dev/null || true
+    sudo -u "$TARGET_USER" rclone config delete drive 2>/dev/null || true
 
-    # Khởi tạo remote và tự động bật trình duyệt
-    rclone config create drive drive scope drive config_is_local true < /dev/tty
+    # Khởi tạo remote và tự động bật trình duyệt dưới danh nghĩa TARGET_USER
+    sudo -u "$TARGET_USER" \
+        DISPLAY="$DISPLAY" \
+        XAUTHORITY="$XAUTHORITY" \
+        XDG_RUNTIME_DIR="/run/user/$TARGET_UID" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$TARGET_UID/bus" \
+        BROWSER="${BROWSER:-}" \
+        rclone config create drive drive scope drive config_is_local true < /dev/tty
 
     success "Đã xác thực và lưu token Google Drive thành công!"
 else
-    log "Đã tìm thấy cấu hình remote 'drive' hợp lệ trên máy."
+    log "Đã tìm thấy cấu hình remote 'drive' hợp lệ trên tài khoản $TARGET_USER."
 fi
 
 # Giải phóng điểm mount cũ nếu bị kẹt FUSE
-fusermount -uz "$TARGET_DIR" 2>/dev/null || true
+sudo -u "$TARGET_USER" fusermount -uz "$TARGET_DIR" 2>/dev/null || true
 
 #=========================================================
 # 6. KHỞI CHẠY SERVICE VÀ GHIM BOOKMARK VÀO NEMO
 #=========================================================
 
-log "Kích hoạt Systemd Mount Service..."
-systemctl --user daemon-reload 2>/dev/null || true
-systemctl --user enable --now rclone-gdrive.service 2>/dev/null || true
+log "Kích hoạt Systemd Mount Service cho $TARGET_USER..."
+sudo -u "$TARGET_USER" XDG_RUNTIME_DIR="/run/user/$TARGET_UID" systemctl --user daemon-reload 2>/dev/null || true
+sudo -u "$TARGET_USER" XDG_RUNTIME_DIR="/run/user/$TARGET_UID" systemctl --user enable --now rclone-gdrive.service 2>/dev/null || true
 sleep 3
 
-# Ghim thư mục vào thanh Places bên trái của Nemo (GTK3 Bookmarks)
-GTK_BOOKMARKS="$HOME/.config/gtk-3.0/bookmarks"
-mkdir -p "$HOME/.config/gtk-3.0"
-touch "$GTK_BOOKMARKS"
+# Ghim thư mục vào thanh Places bên trái của Nemo (GTK3 Bookmarks) của TARGET_USER
+GTK_DIR="$TARGET_HOME/.config/gtk-3.0"
+GTK_BOOKMARKS="$GTK_DIR/bookmarks"
+sudo -u "$TARGET_USER" mkdir -p "$GTK_DIR"
+sudo -u "$TARGET_USER" touch "$GTK_BOOKMARKS"
 
-sed -i '/GoogleDrive/d' "$GTK_BOOKMARKS"
-echo "file://$TARGET_DIR Google Drive" >> "$GTK_BOOKMARKS"
-success "Đã ghim lối tắt Google Drive vào trình quản lý tệp Nemo."
+sudo -u "$TARGET_USER" sed -i '/GoogleDrive/d' "$GTK_BOOKMARKS"
+echo "file://$TARGET_DIR Google Drive" | sudo -u "$TARGET_USER" tee -a "$GTK_BOOKMARKS" >/dev/null
+success "Đã ghim lối tắt Google Drive vào trình quản lý tệp Nemo của $TARGET_USER."
 
 #=========================================================
 # 7. TỔNG KẾT
@@ -223,15 +237,32 @@ echo "       CÀI ĐẶT GOOGLE DRIVE LINUX MINT HOÀN TẤT"
 echo "====================================================="
 echo -e "${NC}"
 
-echo "Thư mục gắn  : $TARGET_DIR"
-echo "Trạng thái   : "
-if systemctl --user is-active --quiet rclone-gdrive.service 2>/dev/null; then
-    echo -e "  -> ${GREEN}KẾT NỐI THÀNH CÔNG (Active Running).${NC}"
+echo "Tài khoản sở hữu : $TARGET_USER"
+echo "Thư mục gắn      : $TARGET_DIR"
+echo -n "Trạng thái       : "
+
+IS_RUNNING=false
+if sudo -u "$TARGET_USER" XDG_RUNTIME_DIR="/run/user/$TARGET_UID" systemctl --user is-active --quiet rclone-gdrive.service 2>/dev/null; then
+    IS_RUNNING=true
+fi
+
+if [[ "$IS_RUNNING" == true ]]; then
+    echo -e "${GREEN}KẾT NỐI THÀNH CÔNG (Active Running).${NC}"
     echo "  -> Mở ứng dụng Nemo (Tập tin) -> Bấm vào mục 'Google Drive' ở cột trái để sử dụng."
 else
-    echo -e "  -> ${YELLOW}CHƯA KÍCH HOẠT: Vui lòng kiểm tra lại quyền xác thực trên trình duyệt.${NC}"
+    # Phương án dự phòng chạy background nếu session systemd user bị cách ly
+    warn "Systemd User Session đang bị cô lập, chuyển sang kích hoạt trực tiếp..."
+    sudo -u "$TARGET_USER" rclone mount drive: "$TARGET_DIR" \
+      --vfs-cache-mode full \
+      --vfs-cache-max-age 24h \
+      --vfs-read-chunk-size 32M \
+      --buffer-size 32M \
+      --dir-cache-time 72h --daemon
+    echo -e "${GREEN}KẾT NỐI THÀNH CÔNG (FUSE Daemon Active).${NC}"
+    echo "  -> Toàn bộ dữ liệu Drive đã sẵn sàng trong Nemo!"
 fi
-echo "Thời gian    : ${ELAPSED} giây"
+
+echo "Thời gian        : ${ELAPSED} giây"
 echo
 
 exit 0
