@@ -4,7 +4,7 @@
 # Method  : Rclone Native FUSE Mount + Nemo Bookmark
 # Author  : Long Nguyen
 # Script  : drive-mint.sh
-# Version : 2.0 ngày 10.11.2026
+# Version : 2.2 ngày 10.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -38,7 +38,7 @@ echo "====================================================="
 echo -e "${NC}"
 
 #=========================================================
-# 1. KIỂM TRA MÔI TRƯỜNG & TỰ ĐỘNG BẮT DISPLAY / D-BUS
+# 1. KIỂM TRA MÔI TRƯỜNG & TỰ ĐỘNG BẮT DISPLAY / GUI SESSION
 #=========================================================
 
 [[ $EUID -ne 0 ]] || die \
@@ -49,24 +49,39 @@ CURRENT_USER="$USER"
 CURRENT_UID="$(id -u)"
 TARGET_DIR="$HOME/GoogleDrive"
 
-# Tự động phát hiện DISPLAY nếu chạy qua RustDesk / SSH / su
-if [[ -z "${DISPLAY:-}" ]]; then
-    DETECTED_DISPLAY=$(who | grep -o '(:[0-9]*' | tr -d '(:' | head -n 1 || true)
-    if [[ -n "$DETECTED_DISPLAY" ]]; then
-        export DISPLAY=":$DETECTED_DISPLAY"
-    else
-        export DISPLAY=":0"
-    fi
+# Tìm tài khoản người dùng đang đăng nhập trên màn hình desktop thực tế
+ACTIVE_GUI_USER=$(who | awk '$0 ~ /(:0|\(:[0-9]\))/ {print $1; exit}' || true)
+ACTIVE_GUI_USER="${ACTIVE_GUI_USER:-$CURRENT_USER}"
+
+export DISPLAY=":0"
+
+# Mượn quyền Xauthority của user đang sở hữu desktop
+if [[ -f "/home/$ACTIVE_GUI_USER/.Xauthority" ]]; then
+    export XAUTHORITY="/home/$ACTIVE_GUI_USER/.Xauthority"
+else
+    export XAUTHORITY="$HOME/.Xauthority"
 fi
 
-# Tự động gán quyền Xauthority và D-Bus
-export XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$CURRENT_UID}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
 export XDG_CURRENT_DESKTOP="${XDG_CURRENT_DESKTOP:-X-Cinnamon}"
 
-log "User thực thi: $CURRENT_USER (UID: $CURRENT_UID, DISPLAY: $DISPLAY)"
-log "Thư mục mount: $TARGET_DIR"
+# Cấp phép cho tiến trình mở cửa sổ GUI lên màn hình
+xhost +local: 2>/dev/null || true
+xhost +si:localuser:"$CURRENT_USER" 2>/dev/null || true
+
+# Nhận diện trình duyệt sẵn có trên hệ thống để Rclone gọi chính xác
+if command -v google-chrome >/dev/null 2>&1; then
+    export BROWSER="google-chrome"
+elif command -v microsoft-edge >/dev/null 2>&1; then
+    export BROWSER="microsoft-edge"
+elif command -v firefox >/dev/null 2>&1; then
+    export BROWSER="firefox"
+fi
+
+log "User thực thi : $CURRENT_USER (GUI User: $ACTIVE_GUI_USER, DISPLAY: $DISPLAY)"
+log "Trình duyệt   : ${BROWSER:-Mặc định hệ thống}"
+log "Thư mục mount : $TARGET_DIR"
 
 #=========================================================
 # 2. XÁC THỰC QUYỀN SUDO & KEEPALIVE
@@ -144,7 +159,7 @@ EOF
 systemctl --user daemon-reload 2>/dev/null || true
 
 #=========================================================
-# 5. XÁC THỰC OAUTH (TỰ ĐỘNG BẬT TRÌNH DUYỆT ĐĂNG NHẬP GOOGLE)
+# 5. XÁC THỰC OAUTH (TỰ ĐỘNG MỞ TRÌNH DUYỆT 1 LẦN DUY NHẤT)
 #=========================================================
 
 DRIVE_CONFIGURED=false
@@ -159,17 +174,14 @@ if [[ "$DRIVE_CONFIGURED" == false ]]; then
     echo -e "${YELLOW}=====================================================${NC}"
     echo -e "${YELLOW}       ĐANG MỞ KẾT NỐI GOOGLE TRÊN TRÌNH DUYỆT       ${NC}"
     echo -e "${YELLOW}=====================================================${NC}"
-    log "Đang kích hoạt trình duyệt trên màn hình desktop ($DISPLAY)..."
+    log "Trình duyệt web sẽ tự động mở lên màn hình desktop..."
     log "Vui lòng đăng nhập Gmail và bấm 'Cho phép' (Allow)."
     echo "-----------------------------------------------------"
 
     # Xóa remote drive cũ nếu lỗi/thiếu token
     rclone config delete drive 2>/dev/null || true
 
-    # Đảm bảo quyền mở ứng dụng đồ họa trên màn hình
-    xhost +si:localuser:"$CURRENT_USER" 2>/dev/null || true
-
-    # Chạy lệnh cấu hình tự động mở trình duyệt
+    # Khởi tạo remote và tự động bật trình duyệt
     rclone config create drive drive scope drive config_is_local true < /dev/tty
 
     success "Đã xác thực và lưu token Google Drive thành công!"
