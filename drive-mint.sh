@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #=========================================================
-# Universal Google Drive Integrator
-# Linux Mint 21.x / 22.x / Kubuntu / Ubuntu KDE & Cinnamon
+# Google Drive Integrator for Linux Mint (Cinnamon)
+# Method  : Rclone Native FUSE Mount + Nemo Bookmark
 # Author  : Long Nguyen
-# Script  : install-google-drive.sh
-# Version : 4.3 ngày 10.11.2026
+# Script  : drive-mint.sh
+# Version : 1.0 ngày 10.11.2026
 #=========================================================
 
 set -Eeuo pipefail
@@ -31,41 +31,33 @@ clear 2>/dev/null || true
 
 echo -e "${BLUE}"
 echo "====================================================="
-echo "          GOOGLE DRIVE INTEGRATOR 4.3"
-echo "      Linux Mint (Cinnamon) / Kubuntu (KDE Plasma)"
-echo "          Author: Long Nguyen"
+echo "       GOOGLE DRIVE INTEGRATOR FOR LINUX MINT"
+echo "           Rclone Native FUSE (Nemo Places)"
+echo "                 Author: Long Nguyen"
 echo "====================================================="
 echo -e "${NC}"
 
 #=========================================================
-# 1. SYSTEM CHECK
+# 1. KIỂM TRA MÔI TRƯỜNG & USER
 #=========================================================
 
 [[ $EUID -ne 0 ]] || die \
-"Không chạy script bằng root trực tiếp.
-Hãy chạy: bash $SCRIPT_NAME"
+"Không chạy script bằng root hoặc sudo trực tiếp!
+Hãy chạy với quyền user thông thường: bash $SCRIPT_NAME"
 
-[[ -f /etc/os-release ]] || die "Không nhận diện được hệ điều hành."
+CURRENT_USER="$USER"
+CURRENT_UID="$(id -u)"
+TARGET_DIR="$HOME/GoogleDrive"
 
-source /etc/os-release
-
-OS_ID="${ID:-unknown}"
-OS_NAME="${NAME:-Unknown}"
-OS_VERSION="${VERSION_ID:-Unknown}"
-
-DESKTOP_INFO="${XDG_CURRENT_DESKTOP:-} ${XDG_SESSION_DESKTOP:-} ${DESKTOP_SESSION:-}"
-DESKTOP_INFO="${DESKTOP_INFO,,}"
-
-log "Hệ điều hành: $OS_NAME $OS_VERSION"
-log "Desktop: ${DESKTOP_INFO:-Default}"
-
-# Thiết lập phiên D-Bus an toàn cho systemd user
-CURRENT_UID=$(id -u)
+# Thiết lập D-Bus môi trường tránh lỗi Permission denied khi gọi systemctl --user
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$CURRENT_UID}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
 
+log "User thực thi: $CURRENT_USER (UID: $CURRENT_UID)"
+log "Thư mục mount: $TARGET_DIR"
+
 #=========================================================
-# 2. SUDO CHECK & KEEPALIVE
+# 2. XÁC THỰC QUYỀN SUDO & KEEPALIVE
 #=========================================================
 
 log "Xác thực quyền quản trị..."
@@ -76,29 +68,17 @@ SUDO_PID=$!
 trap 'kill "$SUDO_PID" 2>/dev/null || true; error "Lỗi tại dòng $LINENO"; exit 1' ERR
 
 #=========================================================
-# 3. UPDATE PACKAGE INDEX (Bỏ qua PPA lỗi nếu có)
+# 3. CẬP NHẬT GÓI & CÀI ĐẶT RCLONE + FUSE3
 #=========================================================
 
 log "Cập nhật danh sách gói..."
 sudo apt-get update -o Acquire::AllowInsecureRepositories=true -o Acquire::AllowDowngradeToInsecureRepositories=true || {
-    warn "Một số kho PPA bên thứ ba bị 404, tiếp tục tiến trình..."
+    warn "Bỏ qua cảnh báo repository để tiếp tục tiến trình..."
 }
-success "Cập nhật Package Index thành công."
 
-#=========================================================
-# 4. CÀI ĐẶT RCLONE & FUSE3 CHO MỌI HỆ THỐNG
-#=========================================================
-
-INSTALL_MODE="Rclone Native FUSE Mount"
-TARGET_DIR="$HOME/GoogleDrive"
-mkdir -p "$TARGET_DIR"
-
-PACKAGES=(
-    rclone
-    fuse3
-)
-
+PACKAGES=(rclone fuse3)
 MISSING_PACKAGES=()
+
 for pkg in "${PACKAGES[@]}"; do
     if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
         success "$pkg: Đã cài đặt."
@@ -109,12 +89,18 @@ for pkg in "${PACKAGES[@]}"; do
 done
 
 if (( ${#MISSING_PACKAGES[@]} > 0 )); then
-    log "Đang cài đặt các gói còn thiếu..."
+    log "Đang cài đặt các gói phụ thuộc..."
     sudo apt-get install -y "${MISSING_PACKAGES[@]}"
-    success "Cài đặt hoàn tất."
+    success "Cài đặt gói thành công."
 fi
 
-# Cấu hình systemd user service
+kill "$SUDO_PID" 2>/dev/null || true
+
+#=========================================================
+# 4. THIẾT LẬP SYSTEMD USER SERVICE
+#=========================================================
+
+mkdir -p "$TARGET_DIR"
 SERVICE_DIR="$HOME/.config/systemd/user"
 SERVICE_FILE="$SERVICE_DIR/rclone-gdrive.service"
 mkdir -p "$SERVICE_DIR"
@@ -142,13 +128,11 @@ RestartSec=5
 WantedBy=default.target
 EOF
 
-# Nạp lại daemon với bọc an toàn tránh ngắt script nếu lỗi D-Bus bus
+# Nạp lại systemd an toàn
 systemctl --user daemon-reload 2>/dev/null || true
 
-kill "$SUDO_PID" 2>/dev/null || true
-
 #=========================================================
-# 5. XÁC THỰC OAUTH TỰ ĐỘNG MỞ TRÌNH DUYỆT (1 LẦN)
+# 5. XÁC THỰC OAUTH TỰ ĐỘNG MỞ TRÌNH DUYỆT (1 LẦN DUY NHẤT)
 #=========================================================
 
 DRIVE_CONFIGURED=false
@@ -163,64 +147,44 @@ if [[ "$DRIVE_CONFIGURED" == false ]]; then
     echo -e "${YELLOW}=====================================================${NC}"
     echo -e "${YELLOW}       ĐANG MỞ KẾT NỐI GOOGLE TRÊN TRÌNH DUYỆT       ${NC}"
     echo -e "${YELLOW}=====================================================${NC}"
-    log "Trình duyệt web sẽ tự động mở để ủy quyền..."
+    log "Trình duyệt web sẽ tự động mở để cấp quyền truy cập..."
     log "Vui lòng đăng nhập Gmail và bấm 'Cho phép' (Allow)."
     echo "-----------------------------------------------------"
 
+    # Xóa remote drive cũ nếu lỗi/thiếu token
     rclone config delete drive 2>/dev/null || true
+
+    # Kích hoạt flow OAuth cục bộ, nhận luồng từ /dev/tty
     rclone config create drive drive scope drive config_is_local true < /dev/tty
 
-    success "Đã xác thực và lưu cấu hình Google Drive thành công!"
+    success "Đã xác thực và lưu token Google Drive thành công!"
 else
     log "Đã tìm thấy cấu hình remote 'drive' hợp lệ trên máy."
 fi
 
-# Giải phóng điểm mount cũ nếu còn kẹt
+# Giải phóng điểm mount cũ nếu bị kẹt FUSE
 fusermount -uz "$TARGET_DIR" 2>/dev/null || true
 
-log "Kích hoạt và nạp chạy Systemd Mount Service..."
+#=========================================================
+# 6. KHỞI CHẠY SERVICE VÀ GHIM BOOKMARK VÀO NEMO
+#=========================================================
+
+log "Kích hoạt Systemd Mount Service..."
 systemctl --user daemon-reload 2>/dev/null || true
 systemctl --user enable --now rclone-gdrive.service 2>/dev/null || true
 sleep 3
 
-#=========================================================
-# 6. GHIM LỐI TẮT VÀO THANH PLACES (DOLPHIN & NEMO)
-#=========================================================
-
-# 1. Ghim vào Nemo / GTK (Linux Mint)
+# Ghim thư mục vào thanh Places bên trái của Nemo (GTK3 Bookmarks)
 GTK_BOOKMARKS="$HOME/.config/gtk-3.0/bookmarks"
 mkdir -p "$HOME/.config/gtk-3.0"
 touch "$GTK_BOOKMARKS"
+
 sed -i '/GoogleDrive/d' "$GTK_BOOKMARKS"
 echo "file://$TARGET_DIR Google Drive" >> "$GTK_BOOKMARKS"
-log "Đã thêm lối tắt vào trình quản lý tệp Nemo (Linux Mint)."
-
-# 2. Ghim vào Dolphin (Kubuntu / KDE)
-USER_PLACES="$HOME/.local/share/user-places.xbel"
-if [[ -f "$USER_PLACES" ]]; then
-    sed -i '/<bookmark href="gdrive:\/">/,/<\/bookmark>/d' "$USER_PLACES" 2>/dev/null || true
-    sed -i '/<bookmark href="file:\/\/.*GoogleDrive">/,/<\/bookmark>/d' "$USER_PLACES" 2>/dev/null || true
-    sed -i 's|</xbel>||' "$USER_PLACES"
-    cat <<EOF >> "$USER_PLACES"
- <bookmark href="file://$TARGET_DIR">
-  <title>Google Drive</title>
-  <info>
-   <metadata owner="http://freedesktop.org">
-    <bookmark:icon name="folder-cloud"/>
-   </metadata>
-   <metadata owner="http://www.kde.org">
-    <ID>$(date +%s%N)</ID>
-    <IsHidden>false</IsHidden>
-   </metadata>
-  </info>
- </bookmark>
-</xbel>
-EOF
-    log "Đã thêm lối tắt vào trình quản lý tệp Dolphin (Kubuntu)."
-fi
+success "Đã ghim lối tắt Google Drive vào trình quản lý tệp Nemo."
 
 #=========================================================
-# 7. HOÀN TẤT
+# 7. TỔNG KẾT
 #=========================================================
 
 END_TIME=$(date +%s)
@@ -228,22 +192,19 @@ ELAPSED=$((END_TIME - START_TIME))
 
 echo
 echo -e "${GREEN}====================================================="
-echo "         GOOGLE DRIVE SETUP COMPLETED"
+echo "       CÀI ĐẶT GOOGLE DRIVE LINUX MINT HOÀN TẤT"
 echo "====================================================="
 echo -e "${NC}"
 
-echo "Hệ điều hành : $OS_NAME $OS_VERSION"
 echo "Thư mục gắn  : $TARGET_DIR"
 echo "Trạng thái   : "
 if systemctl --user is-active --quiet rclone-gdrive.service 2>/dev/null; then
     echo -e "  -> ${GREEN}KẾT NỐI THÀNH CÔNG (Active Running).${NC}"
-    echo "  -> Toàn bộ dữ liệu Drive đã sẵn sàng trong File Manager!"
+    echo "  -> Mở ứng dụng Nemo (Tập tin) -> Bấm vào mục 'Google Drive' ở cột trái để sử dụng."
 else
-    echo -e "  -> ${YELLOW}CHƯA KÍCH HOẠT: Vui lòng kiểm tra lại quá trình xác thực.${NC}"
+    echo -e "  -> ${YELLOW}CHƯA KÍCH HOẠT: Vui lòng kiểm tra lại quyền xác thực trên trình duyệt.${NC}"
 fi
 echo "Thời gian    : ${ELAPSED} giây"
-
 echo
-success "Hoàn tất cài đặt Google Drive Integrator 4.3."
 
 exit 0
